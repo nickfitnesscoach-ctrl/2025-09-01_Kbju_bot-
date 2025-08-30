@@ -1,5 +1,5 @@
 from collections.abc import Awaitable
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message
@@ -11,9 +11,9 @@ class CounterMiddleware(BaseMiddleware):
 
     async def __call__(
         self,
-        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        handler: Callable[[Message, dict[str, Any]], Awaitable[Any]],
         event: Message,
-        data: Dict[str, Any]
+        data: dict[str, Any]
     ) -> Any:
         self.counter += 1
         data['counter'] = self.counter

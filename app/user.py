@@ -8,10 +8,10 @@ import html
 import logging
 from datetime import datetime
 from functools import wraps
-from typing import Any, Dict
+from typing import Any
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -80,8 +80,8 @@ def error_handler(func):
                 if args and hasattr(args[0], 'answer'):
                     try:
                         await args[0].answer()
-                    except:
-                        pass
+                    except (TelegramBadRequest, TelegramNetworkError) as e:
+                        logger.warning("Send answer failed: %s", e)
                 return
             
             # Пробуем отправить новое сообщение вместо редактирования
@@ -91,8 +91,8 @@ def error_handler(func):
                         "❌ Произошла ошибка. Попробуйте еще раз.",
                         reply_markup=back_to_menu()
                     )
-                except:
-                    pass
+                except Exception as e:
+                    logger.exception("Unhandled UI error: %s", e)
         except TelegramRetryAfter as e:
             logger.warning(f"Rate limited by Telegram: {e}")
             await asyncio.sleep(e.retry_after)
@@ -104,12 +104,12 @@ def error_handler(func):
                         "❌ Произошла ошибка. Попробуйте еще раз.",
                         reply_markup=back_to_menu()
                     )
-                except:
-                    pass
+                except Exception as e:
+                    logger.exception("Unhandled UI error: %s", e)
     return wrapper
 
 
-def validate_user_data(data: Dict[str, Any]) -> bool:
+def validate_user_data(data: dict[str, Any]) -> bool:
     """Валидация пользовательских данных"""
     if not data:
         return False
@@ -282,7 +282,7 @@ async def show_profile(callback: CallbackQuery):
         if user_data.calculated_at:
             try:
                 calc_date = user_data.calculated_at.strftime('%d.%m.%Y')
-            except:
+            except Exception:
                 calc_date = "не указано"
         
         profile_text = f"""
