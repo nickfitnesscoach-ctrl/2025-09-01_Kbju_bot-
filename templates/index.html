@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>📝 Управление текстами бота</h1>
+        <p class="text-muted">Здесь вы можете редактировать все тексты, которые отправляет бот пользователям.</p>
+        
+        <div class="mb-3">
+            <button class="btn btn-info" onclick="location.reload()">🔄 Обновить</button>
+            <button class="btn btn-secondary" onclick="togglePreview()">👁️ Переключить превью</button>
+        </div>
+        
+        <div class="alert alert-info">
+            <strong>💡 Подсказка:</strong> Тексты поддерживают HTML-разметку: 
+            <code>&lt;b&gt;жирный&lt;/b&gt;</code>, 
+            <code>&lt;i&gt;курсив&lt;/i&gt;</code>,
+            <code>&lt;code&gt;моноширинный&lt;/code&gt;</code>
+            и эмодзи 🎯💪📊
+        </div>
+    </div>
+</div>
+
+{% macro render_texts(texts, prefix='') %}
+    {% for key, value in texts.items() %}
+        {% if value is mapping %}
+            {% if 'text' in value and 'title' in value %}
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">{{ value.title }}</h5>
+                        <a href="{{ url_for('edit_text', text_key=(prefix + key)) }}" class="btn btn-primary btn-sm">
+                            ✏️ Редактировать
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div class="text-preview preview-content">{{ value.text }}</div>
+                        <small class="text-muted">Ключ: <span class="text-key">{{ prefix + key }}</span></small>
+                    </div>
+                </div>
+            {% else %}
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">📁 {{ key.title().replace('_', ' ') }}</h5>
+                    </div>
+                    <div class="card-body">
+                        {{ render_texts(value, prefix + key + '.') }}
+                    </div>
+                </div>
+            {% endif %}
+        {% else %}
+            <div class="card">
+                <div class="card-body d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1 me-3">
+                        <strong>{{ key.replace('_', ' ').title() }}:</strong>
+                        <div class="text-preview preview-content mt-2">{{ value }}</div>
+                        <small class="text-muted">Ключ: <span class="text-key">{{ prefix + key }}</span></small>
+                    </div>
+                    <a href="{{ url_for('edit_text', text_key=(prefix + key)) }}" class="btn btn-primary btn-sm">
+                        ✏️ Редактировать
+                    </a>
+                </div>
+            </div>
+        {% endif %}
+    {% endfor %}
+{% endmacro %}
+
+{{ render_texts(texts) }}
+
+<script>
+let showPreview = true;
+
+function togglePreview() {
+    showPreview = !showPreview;
+    const previews = document.querySelectorAll('.preview-content');
+    previews.forEach(preview => {
+        preview.style.display = showPreview ? 'block' : 'none';
+    });
+    
+    const btn = event.target;
+    btn.textContent = showPreview ? '👁️ Скрыть превью' : '👁️ Показать превью';
+}
+</script>
+{% endblock %}

@@ -1,0 +1,17 @@
+{
+    "python.analysis.typeCheckingMode": "basic",
+    "python.linting.enabled": false,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": false,
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportAttributeAccessIssue": "none",
+        "reportOptionalMemberAccess": "none",
+        "reportUnnecessaryTypeIgnoreComment": "none"
+    },
+    "python.analysis.autoImportCompletions": true,
+    "python.defaultInterpreterPath": "./.venv/Scripts/python.exe",
+    "ruff.enable": false,
+    "ruff.lint.enable": false,
+    "ruff.format.enable": false,
+    "python.formatting.provider": "none"
+}

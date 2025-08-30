@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Редактирование текста{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('index') }}">Главная</a></li>
+                <li class="breadcrumb-item active">{{ text_key }}</li>
+            </ol>
+        </nav>
+        
+        <h1>✏️ Редактирование текста</h1>
+        <p class="text-muted">Ключ: <span class="text-key">{{ text_key }}</span></p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Редактирование</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('save_text') }}">
+                    <input type="hidden" name="text_key" value="{{ text_key }}">
+                    
+                    <div class="mb-3">
+                        <label for="text_content" class="form-label">Текст сообщения:</label>
+                        <textarea 
+                            class="form-control" 
+                            id="text_content" 
+                            name="text_content" 
+                            rows="12" 
+                            required
+                            style="font-family: 'Segoe UI', sans-serif; line-height: 1.4;"
+                        >{{ text_data.text if text_data is mapping and 'text' in text_data else text_data }}</textarea>
+                        <div class="form-text">
+                            Поддерживается HTML-разметка: &lt;b&gt;жирный&lt;/b&gt;, &lt;i&gt;курсив&lt;/i&gt;, &lt;code&gt;моноширинный&lt;/code&gt;
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Пароль для сохранения:</label>
+                        <input type="password" class="form-control" id="password" name="password" required 
+                               placeholder="Введите пароль админ-панели">
+                    </div>
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('index') }}" class="btn btn-secondary">Отмена</a>
+                        <button type="submit" class="btn btn-success">💾 Сохранить</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Предварительный просмотр</h5>
+            </div>
+            <div class="card-body">
+                <div class="text-preview" id="preview">
+                    {{ text_data.text if text_data is mapping and 'text' in text_data else text_data }}
+                </div>
+                
+                <div class="mt-3">
+                    <h6>💡 Подсказки по форматированию:</h6>
+                    <ul class="small">
+                        <li><code>&lt;b&gt;текст&lt;/b&gt;</code> - жирный текст</li>
+                        <li><code>&lt;i&gt;текст&lt;/i&gt;</code> - курсив</li>
+                        <li><code>&lt;code&gt;текст&lt;/code&gt;</code> - моноширинный шрифт</li>
+                        <li><code>{параметр}</code> - подстановка значений</li>
+                        <li>Поддерживаются эмодзи 🎯💪📊</li>
+                        <li><code>\n</code> - перенос строки</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Предварительный просмотр в реальном времени
+document.getElementById('text_content').addEventListener('input', function() {
+    const preview = document.getElementById('preview');
+    let text = this.value;
+    
+    // Простая замена HTML тегов для предварительного просмотра
+    text = text.replace(/<b>(.*?)<\/b>/g, '<strong>$1</strong>');
+    text = text.replace(/<i>(.*?)<\/i>/g, '<em>$1</em>');
+    text = text.replace(/<code>(.*?)<\/code>/g, '<code>$1</code>');
+    text = text.replace(/\n/g, '<br>');
+    
+    preview.innerHTML = text;
+});
+</script>
+{% endblock %}

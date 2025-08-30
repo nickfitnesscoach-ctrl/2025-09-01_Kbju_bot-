@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - DB_URL=${DB_URL}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - CHANNEL_URL=${CHANNEL_URL}
+      - DEBUG=${DEBUG}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - postgres
+    networks:
+      - bot-network
+
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=fitness_bot
+      - POSTGRES_USER=bot_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - bot-network
+
+volumes:
+  postgres_data:
+
+networks:
+  bot-network:
+    driver: bridge

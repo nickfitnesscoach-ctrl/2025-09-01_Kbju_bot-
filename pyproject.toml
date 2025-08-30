@@ -1,0 +1,27 @@
+[tool.ruff]
+# Максимальная длина строки
+line-length = 100
+
+# Проверки (E - pycodestyle, F - pyflakes, I - import order, UP - pyupgrade)
+select = ["E", "F", "I", "UP"]
+
+# Игнорируем:
+# - E501: длина строки (чтобы не мешал, если строка длиннее line-length)
+# - F403/F405: импорт через * (часто в aiogram FSM states)
+ignore = ["E501", "F403", "F405"]
+
+# Исключаем служебные директории
+exclude = [
+    ".venv",
+    "migrations",
+    "__pycache__",
+    "*.pyc"
+]
+
+# Авто-исправления
+fix = true
+
+[tool.ruff.isort]
+# Настройка сортировки импортов
+known-first-party = ["app"]
+combine-as-imports = true
