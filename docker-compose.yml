@@ -1,37 +1,51 @@
-version: '3.8'
-
+# docker-compose.yml
 services:
   bot:
     build: .
+    container_name: kbju_bot-bot
     restart: unless-stopped
-    environment:
-      - BOT_TOKEN=${BOT_TOKEN}
-      - DB_URL=${DB_URL}
-      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
-      - CHANNEL_URL=${CHANNEL_URL}
-      - DEBUG=${DEBUG}
+
+    # Все секреты и переменные берём из .env
+    env_file:
+      - .env
+
+    # Том для SQLite (переживает перезапуски и пересборки)
     volumes:
-      - ./data:/app/data
+      - kbju_sqlite:/app/data
+
+    # Бот стартует после готовности БД (если используешь Postgres)
     depends_on:
-      - postgres
-    networks:
-      - bot-network
+      postgres:
+        condition: service_healthy
+
+    command: ["python", "run.py"]
 
   postgres:
     image: postgres:15
+    container_name: kbju_bot-postgres
     restart: unless-stopped
+
+    # То же .env, чтобы не дублировать значения
+    env_file:
+      - .env
     environment:
-      - POSTGRES_DB=fitness_bot
-      - POSTGRES_USER=bot_user
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-fitness_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-bot_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - bot-network
+
+    # Открой порт наружу (по желанию)
+    ports:
+      - "5432:5432"
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot_user} -d ${POSTGRES_DB:-fitness_bot}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   postgres_data:
-
-networks:
-  bot-network:
-    driver: bridge
+  kbju_sqlite:

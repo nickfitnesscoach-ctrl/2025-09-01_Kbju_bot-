@@ -70,3 +70,7 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+# local secrets
+.env
+/app/data/
+*.sqlite
