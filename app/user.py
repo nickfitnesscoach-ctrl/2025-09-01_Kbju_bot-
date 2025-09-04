@@ -589,40 +589,19 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
 @rate_limit
 @error_handler
 async def process_delayed_yes(callback: CallbackQuery):
-    """Обработка положительного ответа на отложенное предложение - оффер консультации"""
+    """Обработка положительного ответа на отложенное предложение - выбор направления"""
     if not callback.from_user or not callback.from_user.id or not callback.message:
         return
         
-    # Обновляем статус на горячий лид
-    await update_user_status(
-        tg_id=callback.from_user.id,
-        status='hotlead_delayed',
-        priority_score=80  # Высокий приоритет для отложенных горячих лидов
-    )
+    # Отменяем таймер - пользователь продолжил воронку
+    TimerService.cancel_timer(callback.from_user.id)
     
-    # Отправляем данные в webhook
-    user_data = await get_user(callback.from_user.id)
-    if user_data:
-        user_dict = _user_to_dict(user_data)
-        await WebhookService.send_hot_lead(user_dict, 'system_plan')
-    
-    consultation_text = """
-🔥 <b>Отлично! Системный подход - это ключ к результату!</b>
-
-🎖 <b>Я предлагаю тебе бесплатную консультацию!</b>
-
-На ней мы:
-• Проанализируем твой образ жизни
-• Составим персональную стратегию
-• Разберём все препятствия на пути к цели
-• Определим конкретные шаги
-
-📞 <b>Жми кнопку «Оставить заявку» и я свяжусь с тобой в ближайшее время!</b>
-"""
+    # Показываем выбор направления
+    priorities_text = get_text("hot_lead_priorities")
     
     await callback.message.edit_text(
-        consultation_text,
-        reply_markup=consultation_contact_keyboard(),
+        priorities_text,
+        reply_markup=priority_keyboard(),
         parse_mode='HTML'
     )
     await callback.answer()
@@ -714,66 +693,39 @@ async def process_lead_request(callback: CallbackQuery):
     await callback.answer()
 
 
-@user.callback_query(F.data == "funnel_hot")
-@rate_limit
-@error_handler
-async def process_hot_lead(callback: CallbackQuery):
-    """Горячий лид - готов к системной работе"""
-    if not callback.from_user or not callback.from_user.id or not callback.message:
-        return
-        
-    # Отменяем таймер - пользователь продолжил воронку
-    TimerService.cancel_timer(callback.from_user.id)
-    
-    await callback.message.edit_text(
-        "🔥 <b>Отлично! Системный подход - это ключ к результату.</b>\n\n"
-        "💪 Я помогу составить персональный план и буду сопровождать тебя на пути к цели.\n\n"
-        "🎯 <b>Что для тебя сейчас в приоритете?</b>",
-        reply_markup=priority_keyboard(),
-        parse_mode='HTML'
-    )
-
-
 @user.callback_query(F.data.startswith("priority_"))
 @rate_limit
 @error_handler
 async def process_priority(callback: CallbackQuery):
-    """Обработка выбора приоритета и отправка горячего лида"""
+    """Обработка выбора приоритета и показ оффера консультации"""
     if not callback.from_user or not callback.from_user.id or not callback.message or not callback.data:
         return
         
     priority = callback.data.split("_")[1]  # nutrition/training/schedule
     
-    # Обновляем статус на hotlead
+    # Обновляем статус на hotlead с направлением
     await update_user_status(
         tg_id=callback.from_user.id,
-        status='hotlead',
+        status='hotlead_delayed',
         priority=priority,
-        priority_score=60  # Средний приоритет для обычных горячих лидов
+        priority_score=80  # Высокий приоритет для отложенных горячих лидов
     )
     
-    # Получаем данные пользователя и отправляем в n8n
+    # Отправляем данные в webhook
     user_data = await get_user(callback.from_user.id)
     if user_data:
         user_dict = _user_to_dict(user_data)
         await WebhookService.send_hot_lead(user_dict, priority)
     
-    priority_descriptions = {
-        'nutrition': 'питанием и составлением меню',
-        'training': 'тренировками и физическими нагрузками', 
-        'schedule': 'планированием режима и мотивацией'
-    }
-    
-    priority_text = priority_descriptions.get(priority, 'выбранным направлением')
+    # Показываем оффер консультации
+    consultation_text = get_text("consultation_offer")
     
     await callback.message.edit_text(
-        f"✅ <b>Понял, работаем с {priority_text}!</b>\n\n"
-        "🚀 Скоро с тобой свяжется наш специалист для персональной консультации.\n\n"
-        f"📢 А пока можешь изучить наш канал с полезными материалами:\n{CHANNEL_URL or '@fitness_channel'}\n\n"
-        "💬 Если есть срочные вопросы - пиши в поддержку!",
-        reply_markup=back_to_menu(),
+        consultation_text,
+        reply_markup=consultation_contact_keyboard(),
         parse_mode='HTML'
     )
+    await callback.answer()
 
 
 @user.callback_query(F.data == "funnel_cold") 
