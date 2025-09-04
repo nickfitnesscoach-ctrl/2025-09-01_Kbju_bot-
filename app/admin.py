@@ -3,6 +3,7 @@ from aiogram.filters import Command, Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.calculator import get_goal_description, get_activity_description
 from app.database.requests import get_hot_leads
 from app.states import AdminStates
 
@@ -74,6 +75,10 @@ async def show_lead_card(message_or_callback, state: FSMContext, leads_list, ind
     priority_icon = "🎆" if lead.priority_score >= 100 else "🔥" if lead.priority_score >= 80 else "🟠"
     username_text = f"@{lead.username}" if lead.username else "нет username"
     
+    # Получаем описания для цели и активности
+    goal_text = get_goal_description(lead.goal or 'maintenance')
+    activity_text = get_activity_description(lead.activity or 'moderate')
+    
     card_text = f"""
 {priority_icon} <b>Лид #{index + 1}</b>
 
@@ -88,9 +93,11 @@ async def show_lead_card(message_or_callback, state: FSMContext, leads_list, ind
 - Возраст: {lead.age or 'не указан'}
 - Рост: {lead.height or 0} см
 - Вес: {lead.weight or 0} кг
+- Активность: {activity_text}
+- Цель: {goal_text}
 - Калории: {lead.calories or 0} ккал
 
-🎯 Приоритет: {lead.priority or 'не указан'}
+🎯 Направление: {lead.priority or 'не указано'}
 🕓 Обновлен: {lead.updated_at.strftime('%d.%m %H:%M')}
 """
     
