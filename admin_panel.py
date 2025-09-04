@@ -80,35 +80,12 @@ def sanitize_text(text: str) -> str:
     return text
 
 
-def generate_csrf_token():
-    """Генерация CSRF токена"""
-    if 'csrf_token' not in session:
-        session['csrf_token'] = secrets.token_hex(16)
-    return session['csrf_token']
-
-
-def validate_csrf_token(token):
-    """Проверка CSRF токена"""
-    return token == session.get('csrf_token')
-
-
-@app.context_processor
-def inject_csrf_token():
-    return dict(csrf_token=generate_csrf_token)
-
-
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("5 per minute")
 def login():
     """Страница авторизации"""
     if request.method == 'POST':
         password = request.form.get('password', '').strip()
-        csrf_token = request.form.get('csrf_token')
-        
-        # Проверка CSRF токена
-        if not validate_csrf_token(csrf_token):
-            flash('Неверный CSRF токен!', 'error')
-            return redirect(url_for('login'))
         
         # Проверка пароля
         if password and password == ADMIN_PASSWORD:
@@ -165,15 +142,14 @@ def edit_text(text_key):
 @limiter.limit("10 per minute")
 def save_text():
     """Сохранение отредактированного текста"""
-    csrf_token = request.form.get('csrf_token')
-    
-    # Проверка CSRF токена
-    if not validate_csrf_token(csrf_token):
-        flash('Неверный CSRF токен!', 'error')
-        return redirect(request.referrer)
-    
     text_key = request.form.get('text_key')
     new_text = request.form.get('text_content')
+    password = request.form.get('password')
+    
+    # Проверка пароля для сохранения
+    if not password or password != ADMIN_PASSWORD:
+        flash('Неверный пароль!', 'error')
+        return redirect(url_for('edit_text', text_key=text_key))
     
     if not text_key or new_text is None:
         flash('Ошибка: не указан ключ или текст', 'error')
