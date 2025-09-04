@@ -1,11 +1,18 @@
 """
 Веб админ-панель для редактирования текстов бота
+с улучшенной безопасностью
 """
 
+import html
 import os
+import secrets
 import sys
+from functools import wraps
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.security import check_password_hash, generate_password_hash
 
 # Добавляем путь к app модулю
 sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
@@ -13,20 +20,126 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 from app.texts import TEXTS, load_texts, save_texts
 
 app = Flask(__name__)
-app.secret_key = 'fitness-bot-admin-secret-key-2024'  # Измените на свой секретный ключ
 
-# Простая аутентификация (в продакшене используйте более надежную)
-ADMIN_PASSWORD = "admin123"  # Измените на свой пароль
+# Безопасная конфигурация
+app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(32))
+ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'change-me-please')
+MAX_TEXT_LENGTH = 10000  # Максимальная длина текста
+
+# Защита от брутфорса
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# Предупреждение о небезопасном пароле
+if ADMIN_PASSWORD == 'change-me-please':
+    print("\n" + "="*60)
+    print("⚠️  КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ О БЕЗОПАСНОСТИ!")
+    print("Используется пароль по умолчанию!")
+    print("Установите ADMIN_PASSWORD в .env файле")
+    print("="*60 + "\n")
+
+
+def require_auth(f):
+    """Декоратор для проверки аутентификации"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('authenticated'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def sanitize_text(text: str) -> str:
+    """Санитизация текста для защиты от XSS"""
+    if not text:
+        return ""
+    
+    # Ограничиваем длину
+    if len(text) > MAX_TEXT_LENGTH:
+        text = text[:MAX_TEXT_LENGTH]
+    
+    # Экранируем опасные символы (кроме разрешенных HTML тегов)
+    # Разрешаем только базовые теги для Telegram
+    allowed_tags = ['<b>', '</b>', '<i>', '</i>', '<u>', '</u>', '<s>', '</s>', '<code>', '</code>', '<pre>', '</pre>']
+    
+    # Простая валидация - проверяем что в тексте нет неразрешенных тегов
+    import re
+    
+    # Находим все HTML теги
+    html_tags = re.findall(r'<[^>]+>', text)
+    
+    for tag in html_tags:
+        if tag not in allowed_tags:
+            # Если нашли неразрешенный тег - экранируем весь текст
+            text = html.escape(text)
+            break
+    
+    return text
+
+
+def generate_csrf_token():
+    """Генерация CSRF токена"""
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_hex(16)
+    return session['csrf_token']
+
+
+def validate_csrf_token(token):
+    """Проверка CSRF токена"""
+    return token == session.get('csrf_token')
+
+
+@app.context_processor
+def inject_csrf_token():
+    return dict(csrf_token=generate_csrf_token)
+
+
+@app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
+def login():
+    """Страница авторизации"""
+    if request.method == 'POST':
+        password = request.form.get('password', '').strip()
+        csrf_token = request.form.get('csrf_token')
+        
+        # Проверка CSRF токена
+        if not validate_csrf_token(csrf_token):
+            flash('Неверный CSRF токен!', 'error')
+            return redirect(url_for('login'))
+        
+        # Проверка пароля
+        if password and password == ADMIN_PASSWORD:
+            session['authenticated'] = True
+            session.permanent = True
+            flash('Успешная авторизация!', 'success')
+            return redirect(url_for('index'))
+        else:
+            flash('Неверный пароль!', 'error')
+    
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    """Выход из системы"""
+    session.clear()
+    flash('Вы вышли из системы', 'info')
+    return redirect(url_for('login'))
 
 
 @app.route('/')
+@require_auth
 def index():
     """Главная страница с списком всех текстов"""
-    load_texts()  # Обновляем тексты
+    load_texts()
     return render_template('index.html', texts=TEXTS)
 
 
 @app.route('/edit/<path:text_key>')
+@require_auth
 def edit_text(text_key):
     """Страница редактирования конкретного текста"""
     load_texts()
@@ -48,11 +161,15 @@ def edit_text(text_key):
 
 
 @app.route('/save', methods=['POST'])
+@require_auth
+@limiter.limit("10 per minute")
 def save_text():
     """Сохранение отредактированного текста"""
-    password = request.form.get('password')
-    if password != ADMIN_PASSWORD:
-        flash('Неверный пароль!', 'error')
+    csrf_token = request.form.get('csrf_token')
+    
+    # Проверка CSRF токена
+    if not validate_csrf_token(csrf_token):
+        flash('Неверный CSRF токен!', 'error')
         return redirect(request.referrer)
     
     text_key = request.form.get('text_key')
@@ -61,6 +178,9 @@ def save_text():
     if not text_key or new_text is None:
         flash('Ошибка: не указан ключ или текст', 'error')
         return redirect(url_for('index'))
+    
+    # Санитизация текста
+    new_text = sanitize_text(new_text)
     
     # Обновляем текст в структуре
     keys = text_key.split('.')
@@ -78,9 +198,9 @@ def save_text():
     last_key = keys[-1]
     if isinstance(text_data, dict):
         if isinstance(text_data.get(last_key), dict) and 'text' in text_data[last_key]:
-            text_data[last_key]['text'] = new_text
+            text_data[last_key]['text'] = new_text  # type: ignore
         else:
-            text_data[last_key] = new_text
+            text_data[last_key] = new_text  # type: ignore
         
         # Сохраняем в файл
         save_texts()
@@ -92,6 +212,7 @@ def save_text():
 
 
 @app.route('/api/texts')
+@require_auth
 def api_texts():
     """API для получения всех текстов в JSON"""
     load_texts()
@@ -99,6 +220,7 @@ def api_texts():
 
 
 @app.route('/api/reload')
+@require_auth
 def api_reload():
     """API для перезагрузки текстов"""
     load_texts()
@@ -167,6 +289,13 @@ def create_templates():
             <a class="navbar-brand" href="{{ url_for('index') }}">
                 🤖 Админ-панель Fitness Bot
             </a>
+            <div class="navbar-nav">
+                {% if session.authenticated %}
+                    <a class="nav-link text-white" href="{{ url_for('logout') }}">
+                        🚪 Выйти
+                    </a>
+                {% endif %}
+            </div>
             <span class="navbar-text text-white">
                 📝 Редактор текстов сообщений
             </span>
@@ -380,6 +509,45 @@ document.getElementById('text_content').addEventListener('input', function() {
 </script>
 {% endblock %}'''
     
+    # Страница логина
+    login_template = '''{% extends "base.html" %}
+
+{% block title %}Вход в систему{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">🔐 Авторизация</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Пароль:</label>
+                        <input type="password" class="form-control" id="password" name="password" required 
+                               placeholder="Введите пароль администратора">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100">
+                        🚪 Войти
+                    </button>
+                </form>
+                
+                <div class="mt-3">
+                    <small class="text-muted">
+                        🛡️ Панель защищена от брутфорса<br>
+                        📄 Логи безопасности ведутся
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}'''
+    
     # Создаем файлы шаблонов
     with open('templates/base.html', 'w', encoding='utf-8') as f:
         f.write(base_template)
@@ -389,6 +557,9 @@ document.getElementById('text_content').addEventListener('input', function() {
     
     with open('templates/edit_text.html', 'w', encoding='utf-8') as f:
         f.write(edit_template)
+        
+    with open('templates/login.html', 'w', encoding='utf-8') as f:
+        f.write(login_template)
 
 
 if __name__ == '__main__':

@@ -53,6 +53,13 @@
             <a class="navbar-brand" href="{{ url_for('index') }}">
                 🤖 Админ-панель Fitness Bot
             </a>
+            <div class="navbar-nav">
+                {% if session.authenticated %}
+                    <a class="nav-link text-white" href="{{ url_for('logout') }}">
+                        🚪 Выйти
+                    </a>
+                {% endif %}
+            </div>
             <span class="navbar-text text-white">
                 📝 Редактор текстов сообщений
             </span>
