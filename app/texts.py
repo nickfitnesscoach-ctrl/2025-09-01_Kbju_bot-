@@ -126,6 +126,9 @@ TEXTS = {
 
 def get_text(key: str, **kwargs) -> str:
     """Получить текст по ключу с подстановкой параметров"""
+    # Автоматически перезагружаем тексты при каждом вызове
+    load_texts()
+    
     keys = key.split('.')
     text_data = TEXTS
     
@@ -149,6 +152,8 @@ def get_text(key: str, **kwargs) -> str:
 
 def get_button_text(key: str) -> str:
     """Получить текст кнопки"""
+    # Перезагружаем тексты
+    load_texts()
     return TEXTS.get('buttons', {}).get(key, f"[Кнопка не найдена: {key}]")
 
 

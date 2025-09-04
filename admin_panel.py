@@ -180,7 +180,35 @@ def save_text():
         
         # Сохраняем в файл
         save_texts()
-        flash('Текст успешно сохранен!', 'success')
+        
+        # ВАЖНО: Автоматически отправляем изменения на сервер через Git
+        try:
+            import subprocess
+            import os
+            
+            # Добавляем файл в git
+            subprocess.run(['git', 'add', 'app/texts_data.json'], 
+                         cwd=os.path.dirname(__file__), 
+                         capture_output=True, text=True)
+            
+            # Коммитим изменения
+            commit_msg = f'Обновление текста: {text_key}'
+            subprocess.run(['git', 'commit', '-m', commit_msg], 
+                         cwd=os.path.dirname(__file__), 
+                         capture_output=True, text=True)
+            
+            # Отправляем на сервер
+            result = subprocess.run(['git', 'push', 'origin', 'main'], 
+                                  cwd=os.path.dirname(__file__), 
+                                  capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                flash('Текст успешно сохранен и отправлен на сервер! 🚀', 'success')
+            else:
+                flash('Текст сохранен локально, но ошибка отправки на сервер', 'warning')
+                
+        except Exception as e:
+            flash('Текст сохранен локально, но ошибка автоматической отправки', 'warning')
     else:
         flash('Ошибка структуры данных', 'error')
     
