@@ -101,9 +101,12 @@ async def show_lead_card(message_or_callback, state: FSMContext, leads_list, ind
     )
     
     # Определяем, это новое сообщение или редактирование
-    if hasattr(message_or_callback, 'edit_text'):
-        await message_or_callback.edit_text(card_text, reply_markup=keyboard, parse_mode='HTML')
+    if isinstance(message_or_callback, CallbackQuery):
+        # Это callback - редактируем сообщение
+        if message_or_callback.message and isinstance(message_or_callback.message, Message):
+            await message_or_callback.message.edit_text(card_text, reply_markup=keyboard, parse_mode='HTML')
     else:
+        # Это обычное сообщение - отправляем новое
         await message_or_callback.answer(card_text, reply_markup=keyboard, parse_mode='HTML')
 
 
