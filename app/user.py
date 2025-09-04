@@ -202,7 +202,7 @@ def get_advice_by_goal(goal: str) -> str:
 @rate_limit
 @error_handler
 async def cmd_start(message: Message):
-    """Команда /start - приветствие и главное меню"""
+    """Команда /start - приветствие с фото и главное меню"""
     if not message.from_user or not message.from_user.id:
         logger.warning("Received start command without user info")
         return
@@ -227,11 +227,22 @@ async def cmd_start(message: Message):
         )
         return
     
-    await message.answer(
-        get_text("welcome"),
-        reply_markup=main_menu(),
-        parse_mode='HTML'
-    )
+    # Отправляем фото с приветствием
+    try:
+        await message.answer_photo(
+            photo=get_text("coach_photo_url"),  # URL вашего фото
+            caption=get_text("welcome"),
+            reply_markup=main_menu(),
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Error sending photo: {e}")
+        # Если фото не отправилось, отправляем обычное сообщение
+        await message.answer(
+            get_text("welcome"),
+            reply_markup=main_menu(),
+            parse_mode='HTML'
+        )
 
 
 @user.callback_query(F.data == "main_menu")
