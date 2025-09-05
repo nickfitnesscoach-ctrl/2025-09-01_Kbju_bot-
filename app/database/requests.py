@@ -51,25 +51,6 @@ async def update_user_data(tg_id, **kwargs):
         return user
 
 
-async def update_user_kbju(tg_id, calories, proteins, fats, carbs):
-    """Обновить КБЖУ пользователя"""
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        
-        if user:
-            user.calories = calories
-            user.proteins = proteins
-            user.fats = fats
-            user.carbs = carbs
-            user.funnel_status = 'calculated'
-            user.calculated_at = datetime.utcnow()
-            user.updated_at = datetime.utcnow()
-            
-            await session.commit()
-            
-        return user
-
-
 async def update_user_status(tg_id, status, priority=None, first_name=None, priority_score=None):
     """Обновить статус воронки лидов и дополнительные данные"""
     async with async_session() as session:

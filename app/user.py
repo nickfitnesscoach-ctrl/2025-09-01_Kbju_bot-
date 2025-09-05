@@ -18,18 +18,25 @@ from aiogram.types import CallbackQuery, Message, URLInputFile
 
 from app.calculator import KBJUCalculator, get_activity_description, get_goal_description
 from app.database.requests import get_user, set_user, update_user_data, update_user_status
-from app.keyboards import *
+from app.keyboards import (
+    main_menu, gender_keyboard, activity_keyboard, goal_keyboard,
+    priority_keyboard, profile_keyboard, delayed_offer_keyboard,
+    consultation_contact_keyboard, back_to_menu
+)
 from app.states import KBJUStates
 from app.texts import get_text
 from app.webhook import TimerService, WebhookService
+from app.constants import (
+    USER_REQUESTS_LIMIT, USER_REQUESTS_WINDOW, DEFAULT_CALCULATED_TIMER_DELAY,
+    DELAYED_OFFER_DELAY, PRIORITY_SCORES, VALIDATION_LIMITS, MAX_TEXT_LENGTH,
+    DB_OPERATION_TIMEOUT, FUNNEL_STATUSES
+)
 from config import CHANNEL_URL
 
 logger = logging.getLogger(__name__)
 
 # Rate limiting storage
 user_requests = {}
-USER_REQUESTS_LIMIT = 30
-USER_REQUESTS_WINDOW = 60  # seconds
 
 user = Router()
 
@@ -116,17 +123,17 @@ def validate_user_data(data: dict[str, Any]) -> bool:
     
     # Проверяем возраст
     age = data.get('age')
-    if not age or not (15 <= age <= 80):
+    if not age or not (VALIDATION_LIMITS['age']['min'] <= age <= VALIDATION_LIMITS['age']['max']):
         return False
     
     # Проверяем вес
     weight = data.get('weight')
-    if not weight or not (30 <= weight <= 200):
+    if not weight or not (VALIDATION_LIMITS['weight']['min'] <= weight <= VALIDATION_LIMITS['weight']['max']):
         return False
     
     # Проверяем рост
     height = data.get('height')
-    if not height or not (140 <= height <= 220):
+    if not height or not (VALIDATION_LIMITS['height']['min'] <= height <= VALIDATION_LIMITS['height']['max']):
         return False
     
     # Проверяем обязательные поля
@@ -138,7 +145,7 @@ def validate_user_data(data: dict[str, Any]) -> bool:
     return True
 
 
-def sanitize_text(text: str, max_length: int = 100) -> str:
+def sanitize_text(text: str, max_length: int = MAX_TEXT_LENGTH) -> str:
     """Санитизация текста для безопасности"""
     if not text:
         return ""
@@ -159,8 +166,8 @@ async def send_delayed_offer(user_id: int, chat_id: int):
 
     from config import TOKEN
     
-    # Задержка 3 секунды
-    await asyncio.sleep(3)
+    # Задержка
+    await asyncio.sleep(DELAYED_OFFER_DELAY)
     
     try:
         bot = Bot(token=TOKEN)
@@ -184,7 +191,7 @@ async def safe_db_operation(operation, *args, **kwargs):
     """Безопасное выполнение операций с БД"""
     try:
         # Добавляем timeout
-        return await asyncio.wait_for(operation(*args, **kwargs), timeout=10.0)
+        return await asyncio.wait_for(operation(*args, **kwargs), timeout=DB_OPERATION_TIMEOUT)
     except asyncio.TimeoutError:
         logger.error(f"Database operation timeout: {operation.__name__}")
         return None
@@ -196,6 +203,60 @@ async def safe_db_operation(operation, *args, **kwargs):
 def get_advice_by_goal(goal: str) -> str:
     """Получить советы в зависимости от цели"""
     return get_text(f"advice.{goal}")
+
+
+async def calculate_and_save_kbju(user_id: int, user_data: dict) -> dict:
+    """Рассчитать КБЖУ и сохранить в БД"""
+    # Рассчитываем КБЖУ
+    kbju = KBJUCalculator.calculate_kbju(
+        gender=user_data['gender'],
+        age=user_data['age'], 
+        weight=user_data['weight'],
+        height=user_data['height'],
+        activity=user_data['activity'],
+        goal=user_data['goal']
+    )
+    
+    # Сохраняем в БД
+    await update_user_data(
+        tg_id=user_id,
+        **user_data,
+        **kbju,
+        funnel_status=FUNNEL_STATUSES['calculated'],
+        calculated_at=datetime.utcnow(),
+        priority_score=PRIORITY_SCORES['new']
+    )
+    
+    return kbju
+
+
+async def show_kbju_results(callback: CallbackQuery, kbju: dict, goal: str):
+    """Показать результаты расчета КБЖУ"""
+    goal_text = get_goal_description(goal)
+    
+    result_text = f"""
+🎉 <b>Твоя персональная норма КБЖУ для {goal_text.lower()}:</b>
+
+🔥 <b>Калории:</b> {kbju['calories']} ккал/день
+🥩 <b>Белки:</b> {kbju['proteins']} г
+🥑 <b>Жиры:</b> {kbju['fats']} г  
+🍞 <b>Углеводы:</b> {kbju['carbs']} г
+"""
+    
+    await callback.message.edit_text(
+        result_text,
+        parse_mode='HTML'
+    )
+
+
+async def start_funnel_timer(user_id: int):
+    """Запустить таймер воронки лидов"""
+    await TimerService.start_calculated_timer(user_id, delay_minutes=DEFAULT_CALCULATED_TIMER_DELAY)
+
+
+async def schedule_delayed_offer(user_id: int, chat_id: int):
+    """Запланировать отложенное предложение"""
+    asyncio.create_task(send_delayed_offer(user_id, chat_id))
 
 
 async def send_welcome_sequence(message: Message):
@@ -269,8 +330,7 @@ async def show_main_menu(callback: CallbackQuery):
         return
         
     await callback.message.edit_text(
-        "🎯 <b>Fitness Bot - Главное меню</b>\n\n"
-        "Выбери нужное действие:",
+        get_text("main_menu"),
         reply_markup=main_menu(),
         parse_mode='HTML'
     )
@@ -289,9 +349,7 @@ async def show_profile(callback: CallbackQuery):
     
     if not user_data or not user_data.calories:
         await callback.message.edit_text(
-            "👤 <b>Твой профиль</b>\n\n"
-            "❌ У тебя еще нет рассчитанных КБЖУ\n"
-            "Нажми \"Рассчитать КБЖУ\" чтобы получить персональные данные!",
+            get_text("profile.no_data"),
             reply_markup=main_menu(),
             parse_mode='HTML'
         )
@@ -364,8 +422,7 @@ async def start_kbju_flow(callback: CallbackQuery, state: FSMContext):
         logger.error(f"Error canceling timer: {e}")
     
     await callback.message.edit_text(
-        "👤 <b>Расчет персонального КБЖУ</b>\n\n"
-        "Для точного расчета нужно знать твой пол:",
+        get_text("kbju_start"),
         reply_markup=gender_keyboard(),
         parse_mode='HTML'
     )
@@ -554,50 +611,19 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
         data = await state.get_data()
         data['goal'] = goal
         
-        # Рассчитываем КБЖУ
-        kbju = KBJUCalculator.calculate_kbju(
-            gender=data['gender'],
-            age=data['age'], 
-            weight=data['weight'],
-            height=data['height'],
-            activity=data['activity'],
-            goal=data['goal']
-        )
+        # Рассчитываем КБЖУ и сохраняем в БД
+        kbju = await calculate_and_save_kbju(callback.from_user.id, data)
         
-        # Сохраняем в БД
-        await update_user_data(
-            tg_id=callback.from_user.id,
-            **data,
-            **kbju,
-            funnel_status='calculated',
-            calculated_at=datetime.utcnow(),
-            priority_score=0  # Устанавливаем базовый приоритет
-        )
+        # Запускаем таймер воронки лидов
+        await start_funnel_timer(callback.from_user.id)
         
-        # Запускаем таймер на 60 минут для отправки calculated лида
-        await TimerService.start_calculated_timer(callback.from_user.id, delay_minutes=60)
-        
-        # Показываем результат
-        goal_text = get_goal_description(goal)
-        
-        result_text = f"""
-🎉 <b>Твоя персональная норма КБЖУ для {goal_text.lower()}:</b>
-
-🔥 <b>Калории:</b> {kbju['calories']} ккал/день
-🥩 <b>Белки:</b> {kbju['proteins']} г
-🥑 <b>Жиры:</b> {kbju['fats']} г  
-🍞 <b>Углеводы:</b> {kbju['carbs']} г
-"""
-        
-        await callback.message.edit_text(
-            result_text,
-            parse_mode='HTML'
-        )
+        # Показываем результаты пользователю
+        await show_kbju_results(callback, kbju, goal)
         await callback.answer()
         await state.clear()
         
-        # Запускаем задержанное сообщение с предложением
-        asyncio.create_task(send_delayed_offer(callback.from_user.id, callback.message.chat.id))
+        # Запускаем задержанное предложение
+        await schedule_delayed_offer(callback.from_user.id, callback.message.chat.id)
         
     except Exception as e:
         logger.error(f"Error in process_goal: {e}")
@@ -644,8 +670,8 @@ async def process_delayed_no(callback: CallbackQuery):
     # Обновляем статус на холодный лид
     await update_user_status(
         tg_id=callback.from_user.id,
-        status='coldlead_delayed',
-        priority_score=10  # Низкий приоритет для холодных лидов
+        status=FUNNEL_STATUSES['coldlead_delayed'],
+        priority_score=PRIORITY_SCORES['coldlead_delayed']
     )
     
     # Отправляем данные в webhook
@@ -687,8 +713,8 @@ async def process_lead_request(callback: CallbackQuery):
     # Обновляем статус на горячий лид с высоким приоритетом
     await update_user_status(
         tg_id=callback.from_user.id,
-        status='hotlead_consultation',
-        priority_score=100  # Максимальный приоритет для заявок на консультацию
+        status=FUNNEL_STATUSES['hotlead_consultation'],
+        priority_score=PRIORITY_SCORES['consultation_request']
     )
     
     # Отправляем данные в webhook
@@ -732,9 +758,9 @@ async def process_priority(callback: CallbackQuery):
     # Обновляем статус на hotlead с направлением
     await update_user_status(
         tg_id=callback.from_user.id,
-        status='hotlead_delayed',
+        status=FUNNEL_STATUSES['hotlead_delayed'],
         priority=priority,
-        priority_score=80  # Высокий приоритет для отложенных горячих лидов
+        priority_score=PRIORITY_SCORES['hotlead_delayed']
     )
     
     # Отправляем данные в webhook
@@ -768,8 +794,8 @@ async def process_cold_lead(callback: CallbackQuery):
     # Обновляем статус на coldlead
     await update_user_status(
         tg_id=callback.from_user.id,
-        status='coldlead',
-        priority_score=5  # Минимальный приоритет для обычных холодных лидов
+        status=FUNNEL_STATUSES['coldlead'],
+        priority_score=PRIORITY_SCORES['coldlead']
     )
     
     # Получаем данные пользователя и отправляем в n8n
