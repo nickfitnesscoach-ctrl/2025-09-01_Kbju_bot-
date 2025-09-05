@@ -14,7 +14,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, URLInputFile
 
 from app.calculator import KBJUCalculator, get_activity_description, get_goal_description
 from app.database.requests import get_user, set_user, update_user_data, update_user_status
@@ -198,6 +198,35 @@ def get_advice_by_goal(goal: str) -> str:
     return get_text(f"advice.{goal}")
 
 
+async def send_welcome_sequence(message: Message):
+    """Отправить последовательность приветствия: фото + текст"""
+    # Сначала отправляем фото без caption
+    try:
+        photo_url = get_text("coach_photo_url")
+        photo = URLInputFile(photo_url)
+        await message.answer_photo(photo=photo)
+    except TelegramBadRequest as e:
+        logger.error(f"Error sending photo: {e}")
+    except Exception as e:
+        logger.error(f"Error sending photo: {e}")
+    
+    # Затем отправляем приветственное сообщение с клавиатурой
+    try:
+        welcome_text = get_text("welcome")
+        await message.answer(
+            welcome_text,
+            reply_markup=main_menu(),
+            parse_mode="HTML"
+        )
+    except TelegramBadRequest as e:
+        logger.error(f"Error sending welcome text: {e}")
+        # Fallback сообщение
+        await message.answer(
+            "Добро пожаловать!",
+            reply_markup=main_menu()
+        )
+
+
 @user.message(CommandStart())
 @rate_limit
 @error_handler
@@ -227,22 +256,8 @@ async def cmd_start(message: Message):
         )
         return
     
-    # Отправляем фото с приветствием
-    try:
-        await message.answer_photo(
-            photo=get_text("coach_photo_url"),  # URL вашего фото
-            caption=get_text("welcome"),
-            reply_markup=main_menu(),
-            parse_mode='HTML'
-        )
-    except Exception as e:
-        logger.error(f"Error sending photo: {e}")
-        # Если фото не отправилось, отправляем обычное сообщение
-        await message.answer(
-            get_text("welcome"),
-            reply_markup=main_menu(),
-            parse_mode='HTML'
-        )
+    # Отправляем последовательность приветствия
+    await send_welcome_sequence(message)
 
 
 @user.callback_query(F.data == "main_menu")
