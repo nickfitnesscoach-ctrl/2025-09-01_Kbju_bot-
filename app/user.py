@@ -551,9 +551,9 @@ async def process_height(message: Message, state: FSMContext):
         if 140 <= height <= 220:
             await state.update_data(height=height)
             
+            # ИСПРАВЛЕНО: Используем get_text() вместо хардкода
             await message.answer(
-                f"📏 Рост: <b>{height} см</b>\n\n"
-                "🏃‍♂️ <b>Какой у тебя уровень физической активности?</b>",
+                get_text("questions.activity", height=height),
                 reply_markup=activity_keyboard(),
                 parse_mode='HTML'
             )
@@ -580,10 +580,28 @@ async def process_activity(callback: CallbackQuery, state: FSMContext):
         return
         
     try:
-        activity = callback.data.split("_", 1)[1]  # low/moderate/high/very_high
+        activity_raw = callback.data.split("_", 1)[1]  # min/low/medium/high
+        
+        # Маппинг новых значений на существующие в калькуляторе
+        activity_mapping = {
+            'min': 'low',        # Минимальная -> Низкая в калькуляторе  
+            'low': 'low',        # Низкая -> Низкая
+            'medium': 'moderate', # Средняя -> Умеренная
+            'high': 'high'       # Высокая -> Высокая
+        }
+        
+        activity = activity_mapping.get(activity_raw, 'moderate')
         await state.update_data(activity=activity)
         
-        activity_text = get_activity_description(activity)
+        # Текстовые описания для отображения
+        activity_display_mapping = {
+            'min': '📉 Минимальная',
+            'low': '🚶 Низкая', 
+            'medium': '🏋️ Средняя',
+            'high': '🔥 Высокая'
+        }
+        
+        activity_text = activity_display_mapping.get(activity_raw, '🚶 Умеренная')
         
         await callback.message.edit_text(
             f"🏃‍♂️ Активность: <b>{activity_text}</b>\n\n"
