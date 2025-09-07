@@ -39,19 +39,22 @@ RUN python -m pip install --upgrade pip setuptools wheel \
 COPY . .
 
 # ---- Config shim --------------------------------------------------------------
-# Если config.py отсутствует, создаём из ENV.
-RUN [ -f config.py ] || bash -lc 'cat > config.py <<PY
+# Создаём config.py из ENV, только если файла нет в образе
+RUN test -f config.py || cat > config.py <<'PY'
 import os
+
 def _b(v: str) -> bool:
     return str(v).lower() in ("1","true","yes","y","on")
 
 TOKEN = os.getenv("TOKEN") or os.getenv("BOT_TOKEN", "")
 BOT_TOKEN = TOKEN
+
 DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///db.sqlite3")
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
 CHANNEL_URL = os.getenv("CHANNEL_URL", "")
 DEBUG = _b(os.getenv("DEBUG", "false"))
-PY'
+PY
+
 
 # ---- Security -----------------------------------------------------------------
 RUN useradd -r -u 1001 appuser && chown -R appuser:appuser /app
