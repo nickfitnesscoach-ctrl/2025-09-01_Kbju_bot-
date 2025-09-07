@@ -20,7 +20,7 @@ class Admin(Filter):
 
 @admin.message(Admin(), Command('admin'))
 async def cmd_start(message: Message):
-    await message.answer('Добро пожаловать в бот, администратор!')
+    await message.answer('Привет, Коляс прогер!)')
 
 
 def lead_navigation_keyboard(current_idx: int, total_count: int, user_tg_id: int):

@@ -78,7 +78,7 @@ class KBJUCalculator:
         calories_target = calories_maintenance * (1 + cls.GOAL_ADJUSTMENTS[goal])
         
         # Расчет БЖУ (классические пропорции)
-        proteins = round(weight * 2.2)  # 2.2г на кг веса
+        proteins = round(weight * 1.8)  # 1.8г на кг веса
         fats = round(calories_target * 0.25 / 9)  # 25% от калорий
         carbs = round((calories_target - proteins*4 - fats*9) / 4)  # остальное
         
@@ -119,10 +119,10 @@ class KBJUCalculator:
 def get_activity_description(activity: str) -> str:
     """Получить описание уровня активности"""
     descriptions = {
-        'low': '🛋️ Низкая (офисная работа)',
-        'moderate': '🚶 Умеренная (1-3 тренировки в неделю)',
-        'high': '🏃 Высокая (3-5 тренировок в неделю)',
-        'very_high': '💪 Очень высокая (6-7 тренировок в неделю)'
+        'low': '🛋️ Низкая',
+        'moderate': '🚶 Умеренная',
+        'high': '🏃 Высокая',
+        'very_high': '💪 Очень высокая'
     }
     return descriptions.get(activity, activity)
 
