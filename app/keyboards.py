@@ -60,9 +60,9 @@ def funnel_keyboard():
 def priority_keyboard():
     """Клавиатура выбора приоритета для горячих лидов"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🥗 Питание", callback_data="priority_nutrition")],
-        [InlineKeyboardButton(text="🏋️ Тренировки", callback_data="priority_training")],
-        [InlineKeyboardButton(text="📅 График и мотивация", callback_data="priority_schedule")]
+        [InlineKeyboardButton(text="🍩 Как питаться без ограничений?", callback_data="priority_nutrition")],
+        [InlineKeyboardButton(text="🏋️ Хожу в зал - результата нет", callback_data="priority_training")],
+        [InlineKeyboardButton(text="⏰ Нет времени", callback_data="priority_schedule")]
     ])
 
 
@@ -73,18 +73,6 @@ def profile_keyboard():
         [InlineKeyboardButton(text="🔄 Пересчитать КБЖУ", callback_data="start_kbju")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]
     ])
-
-
-# Подтверждение контакта
-def contact_keyboard():
-    """Клавиатура для запроса контакта"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
 
 
 # Админ клавиатуры (если понадобятся)
