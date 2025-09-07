@@ -97,10 +97,10 @@
     "male": "👨 Мужской",
     "female": "👩 Женский",
 
-    "activity_min": "🧘 Минимальная",
-    "activity_medium": "🏃‍♂️ Средняя",
-    "activity_high": "🏃 Высокая ",
-    "activity_very_high": "💪 Очень высокая",
+    "activity_min":    "🧘 Минимальная",
+    "activity_low":    "🚶 Низкая",
+    "activity_medium": "🏋️ Средняя",
+    "activity_high":   "🔥 Высокая",
 
     "goal_weight_loss": "📉 Похудение",
     "goal_maintenance": "⚖️ Поддержание веса",
