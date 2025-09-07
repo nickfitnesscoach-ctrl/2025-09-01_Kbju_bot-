@@ -1,137 +1,114 @@
 """
 Калькулятор КБЖУ для Fitness Bot
-Использует формулу Миффлина-Сан Жеора для расчета базового метаболизма
+Формула Миффлина—Сан Жеора. Все человеко-читабельные тексты берём из texts_data.json.
 """
+
+from __future__ import annotations
+
+from app.texts import get_text
 
 
 class KBJUCalculator:
-    
-    # Коэффициенты активности
-    ACTIVITY_COEFFICIENTS = {
-        'low': 1.2,        # Минимальная активность (офис)
-        'moderate': 1.375,  # Легкая активность 1-3 раза в неделю
-        'high': 1.55,      # Умеренная активность 3-5 раз в неделю
-        'very_high': 1.725  # Высокая активность 6-7 раз в неделю
+    """Расчёт калорий и БЖУ."""
+
+    # Коэффициенты активности (чистая математика — ок держать в коде)
+    ACTIVITY_COEFFICIENTS: dict[str, float] = {
+        "low": 1.2,
+        "moderate": 1.375,
+        "high": 1.55,
+        "very_high": 1.725,
     }
-    
-    # Корректировки калорий по целям
-    GOAL_ADJUSTMENTS = {
-        'weight_loss': -0.15,    # -15% от нормы
-        'maintenance': 0,        # норма
-        'weight_gain': +0.10     # +10% от нормы
+
+    # Корректировки калорий по целям (тоже математика)
+    GOAL_ADJUSTMENTS: dict[str, float] = {
+        "weight_loss": -0.15,
+        "maintenance": 0.0,
+        "weight_gain": 0.10,
     }
-    
+
     @staticmethod
     def calculate_bmr(gender: str, age: int, weight: float, height: int) -> float:
-        """
-        Расчет базового метаболизма по формуле Миффлина-Сан Жеора
-        
-        Args:
-            gender: 'male' или 'female'
-            age: возраст в годах
-            weight: вес в кг
-            height: рост в см
-            
-        Returns:
-            float: базовый метаболизм в ккал/день
-        """
-        if gender == 'male':
+        """Базовый метаболизм (BMR) по Миффлину—Сан Жеору."""
+        if gender == "male":
             return 10 * weight + 6.25 * height - 5 * age + 5
-        else:
-            return 10 * weight + 6.25 * height - 5 * age - 161
-    
+        return 10 * weight + 6.25 * height - 5 * age - 161
+
     @classmethod
-    def calculate_kbju(cls, gender: str, age: int, weight: float, height: int, 
-                       activity: str, goal: str) -> dict:
+    def calculate_kbju(
+        cls,
+        gender: str,
+        age: int,
+        weight: float,
+        height: int,
+        activity: str,
+        goal: str,
+    ) -> dict[str, int]:
         """
-        Полный расчет КБЖУ с учетом активности и цели
-        
-        Args:
-            gender: 'male' или 'female'
-            age: возраст в годах
-            weight: вес в кг
-            height: рост в см
-            activity: 'low', 'moderate', 'high', 'very_high'
-            goal: 'weight_loss', 'maintenance', 'weight_gain'
-            
-        Returns:
-            dict: словарь с расчитанными КБЖУ
+        Полный расчёт КБЖУ с учётом активности и цели.
+        Возвращает dict: {'calories','proteins','fats','carbs','bmr'} (всё ints).
         """
-        
-        # Валидация входных параметров
-        if gender not in ['male', 'female']:
-            raise ValueError("Gender must be 'male' or 'female'")
-        
+        if gender not in {"male", "female"}:
+            raise ValueError("gender_invalid")
+
         if activity not in cls.ACTIVITY_COEFFICIENTS:
-            raise ValueError(f"Activity must be one of {list(cls.ACTIVITY_COEFFICIENTS.keys())}")
-            
+            raise ValueError("activity_invalid")
+
         if goal not in cls.GOAL_ADJUSTMENTS:
-            raise ValueError(f"Goal must be one of {list(cls.GOAL_ADJUSTMENTS.keys())}")
-        
-        # Базовый метаболизм
+            raise ValueError("goal_invalid")
+
         bmr = cls.calculate_bmr(gender, age, weight, height)
-        
-        # С учетом активности
         calories_maintenance = bmr * cls.ACTIVITY_COEFFICIENTS[activity]
-        
-        # С учетом цели
         calories_target = calories_maintenance * (1 + cls.GOAL_ADJUSTMENTS[goal])
-        
-        # Расчет БЖУ (классические пропорции)
-        proteins = round(weight * 1.8)  # 1.8г на кг веса
-        fats = round(calories_target * 0.25 / 9)  # 25% от калорий
-        carbs = round((calories_target - proteins*4 - fats*9) / 4)  # остальное
-        
+
+        proteins = round(weight * 1.8)                          # 1.8 г/кг
+        fats = round(calories_target * 0.25 / 9)                # 25% калорий
+        carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
+
         return {
-            'calories': round(calories_target),
-            'proteins': proteins,
-            'fats': fats,
-            'carbs': carbs,
-            'bmr': round(bmr)  # для отладки
+            "calories": round(calories_target),
+            "proteins": proteins,
+            "fats": fats,
+            "carbs": carbs,
+            "bmr": round(bmr),
         }
-    
+
     @staticmethod
-    def validate_user_data(gender: str, age: int, weight: float, height: int) -> tuple[bool, str]:
+    def validate_user_data(
+        gender: str, age: int, weight: float, height: int
+    ) -> tuple[bool, str]:
         """
-        Валидация пользовательских данных
-        
-        Returns:
-            tuple: (is_valid, error_message)
+        Валидация пользовательских данных.
+        Возвращает (is_valid, message). message — уже из JSON (errors.*).
         """
-        
-        if gender not in ['male', 'female']:
-            return False, "Некорректный пол"
-        
+        if gender not in {"male", "female"}:
+            return False, get_text("errors.gender_invalid")
+
         if not (15 <= age <= 80):
-            return False, "Возраст должен быть от 15 до 80 лет"
-            
+            return False, get_text("errors.age_range")
+
         if not (30 <= weight <= 200):
-            return False, "Вес должен быть от 30 до 200 кг"
-            
+            return False, get_text("errors.weight_range")
+
         if not (140 <= height <= 220):
-            return False, "Рост должен быть от 140 до 220 см"
-        
+            return False, get_text("errors.height_range")
+
         return True, ""
 
 
-# Вспомогательные функции для текстового представления
+# ---------- Текстовые описания (из JSON) ----------
 
 def get_activity_description(activity: str) -> str:
-    """Получить описание уровня активности"""
-    descriptions = {
-        'low': '🛋️ Низкая',
-        'moderate': '🚶 Умеренная',
-        'high': '🏃 Высокая',
-        'very_high': '💪 Очень высокая'
-    }
-    return descriptions.get(activity, activity)
+    """
+    Человеко-читабельное описание активности.
+    Берётся из texts_data.json → activity_descriptions.<key>
+    """
+    # если ключа нет — вернётся "[Текст не найден: ...]" что заметно в тесте
+    return get_text(f"activity_descriptions.{activity}")
 
 
 def get_goal_description(goal: str) -> str:
-    """Получить описание цели"""
-    descriptions = {
-        'weight_loss': '📉 Похудение',
-        'maintenance': '⚖️ Поддержание веса',
-        'weight_gain': '📈 Набор массы'
-    }
-    return descriptions.get(goal, goal)
+    """
+    Человеко-читабельное описание цели.
+    Берётся из texts_data.json → goal_descriptions.<key>
+    """
+    return get_text(f"goal_descriptions.{goal}")
