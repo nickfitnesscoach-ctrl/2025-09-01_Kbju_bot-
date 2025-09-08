@@ -5,56 +5,52 @@ __pycache__/
 *.pyo
 *.so
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Ruff / linters
-.ruff_cache/
-_ruff_cache/
-
-# Virtual environments
-.env/
+# Виртуальные окружения
 .venv/
 venv/
-venv_new/
 ENV/
 env/
 
-# Local config & secrets
+# Packaging / build артефакты
+build/
+dist/
+.eggs/
+*.egg-info/
+wheels/
+parts/
+sdist/
+var/
+pip-wheel-metadata/
+
+# Linters / caches
+.ruff_cache/
+_ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Локальные конфиги и секреты
 .env
 .env.*.local
 config.local.py
 
-# Databases / runtime
+# Базы данных и рантайм-данные
+data/
+!data/.gitkeep
+logs/
+!logs/.gitkeep
 *.sqlite
 *.sqlite3
 *.db
 *.db-journal
-data/
 
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
+# OS мусор
 .DS_Store
 .DS_Store?
 ._*
@@ -63,14 +59,10 @@ data/
 ehthumbs.db
 Thumbs.db
 
-# Logs
+# Логи / временные файлы
 *.log
-logs/
-
-# Temporary files
 *.tmp
 *.temp
-# local secrets
-.env
-/app/data/
-*.sqlite
+
+# Docker (локальные оверрайды)
+docker-compose.override.yml
