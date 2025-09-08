@@ -5,12 +5,23 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# чтобы новые пуски отменяли предыдущие и не копились
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # опционально: чистим место на runner'е (не на вашем сервере)
+      - name: Clean runner (free space)
+        run: |
+          docker system prune -af || true
+          docker builder prune -af || true
 
       - name: Deploy via SSH (git pull + docker compose)
         uses: appleboy/ssh-action@v1.0.3
@@ -19,18 +30,38 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            set -e
+            set -Eeuo pipefail
             cd "${SERVER_PATH:-/root/bots/kbju_bot}"
 
             echo ">>> Git sync"
             git fetch origin
             git reset --hard origin/main
 
-            echo ">>> Docker compose up"
+            echo ">>> Free space BEFORE"
+            df -h / || true
+            docker system df || true
+
+            echo ">>> Pre-clean Docker on server"
+            # убираем висячие образы/кэш перед сборкой
+            docker image prune -af || true
+            docker builder prune -af || true
+            docker system prune -af || true
+
+            echo ">>> Build & Up"
             docker compose pull || true
-            docker compose build --no-cache bot
-            docker compose up -d
+            # ВАЖНО: без --no-cache, чтобы не плодить слои
+            docker compose build bot
+            docker compose up -d --remove-orphans
+
+            echo ">>> Post-clean Docker on server"
+            # подчистим то, что осталось неиспользуемым после апдейта
+            docker image prune -af --filter "until=24h" || true
+            docker builder prune -af --filter "until=24h" || true
 
             echo ">>> Status"
             docker compose ps
             docker compose logs -n 50 bot || true
+
+            echo ">>> Free space AFTER"
+            docker system df -v || true
+            df -h / || true

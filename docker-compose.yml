@@ -1,31 +1,35 @@
-# docker-compose.yml
 services:
   bot:
     build: .
+    image: kbju_bot-bot:latest            # <-- стабильный тег образа
     container_name: kbju_bot-bot
     restart: unless-stopped
+    pull_policy: if_not_present           # не тянуть лишний раз
 
-    # Все секреты и переменные берём из .env
     env_file:
       - .env
 
-    # Том для SQLite (переживает перезапуски и пересборки)
     volumes:
       - kbju_sqlite:/app/data
 
-    # Бот стартует после готовности БД (если используешь Postgres)
     depends_on:
       postgres:
         condition: service_healthy
 
     command: ["python", "run.py"]
 
+    # Лимитируем логи контейнера
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   postgres:
     image: postgres:15
     container_name: kbju_bot-postgres
     restart: unless-stopped
 
-    # То же .env, чтобы не дублировать значения
     env_file:
       - .env
     environment:
@@ -36,7 +40,6 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-    # Открой порт наружу (по желанию)
     ports:
       - "5432:5432"
 
@@ -45,6 +48,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+    # Лимитируем логи Postgres (они часто пухнут)
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
 volumes:
   postgres_data:

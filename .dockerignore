@@ -1,8 +1,14 @@
 .git
+.github
 __pycache__/
+.pytest_cache/
+.mypy_cache/
 *.pyc
-venv/
-.venv/
+*.pyo
+*.pyd
 .env
+.venv
+venv/
+.DS_Store
+*.log
 data/
-*.sqlite
