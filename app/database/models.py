@@ -4,10 +4,10 @@ from sqlalchemy import BigInteger, DateTime, Float, Integer, String
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from config import DB_URL
+from config import DB_URL, DEBUG
 
 engine = create_async_engine(url=DB_URL,
-                             echo=True)
+                             echo=DEBUG)
     
 async_session = async_sessionmaker(engine)
 

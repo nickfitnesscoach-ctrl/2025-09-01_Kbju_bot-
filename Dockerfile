@@ -13,7 +13,6 @@
         apt-get update; \
         apt-get install -y --no-install-recommends \
             gcc \
-            libpq-dev \
         ; \
         rm -rf /var/lib/apt/lists/*
     
@@ -38,7 +37,6 @@
     RUN set -eux; \
         apt-get update; \
         apt-get install -y --no-install-recommends \
-            libpq5 \
             ca-certificates \
         ; \
         rm -rf /var/lib/apt/lists/*
