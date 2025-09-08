@@ -10,7 +10,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./db.sqlite3:/app/db.sqlite3
+      - ./data:/app/data
       - ./logs:/app/logs
     networks:
       - bot_network

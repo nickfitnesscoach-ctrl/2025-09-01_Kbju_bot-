@@ -18,7 +18,7 @@ TOKEN = os.getenv("TOKEN") or os.getenv("BOT_TOKEN", "")
 BOT_TOKEN = TOKEN
 
 # База данных
-DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///db.sqlite3")
+DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///data/db.sqlite3")
 
 # Webhook для интеграции с n8n
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
