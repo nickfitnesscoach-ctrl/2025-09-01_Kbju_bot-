@@ -37,7 +37,7 @@ jobs:
             
             # 3. Остановка старых контейнеров (освобождает память)
             echo "=== Stopping old containers ==="
-            docker compose stop || true
+            docker compose down --remove-orphans || true
             
             # 4. Агрессивная очистка Docker (безопасная для продакшена)
             echo "=== Docker cleanup ==="
