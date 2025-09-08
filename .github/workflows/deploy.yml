@@ -12,9 +12,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # НИКАКИХ docker system prune здесь, на раннере!
-
-      - name: Deploy via SSH (git pull + docker compose)
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -22,25 +20,77 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -euo pipefail
-            cd "${SERVER_PATH:-/root/bots/kbju_bot}"
-
-            echo ">>> Git sync"
+            
+            # Конфигурация
+            SERVER_PATH="${SERVER_PATH:-/root/bots/kbju_bot}"
+            cd "$SERVER_PATH"
+            
+            # 1. Проверка места на диске перед началом
+            echo "=== Disk space before cleanup ==="
+            df -h / | grep -E "^/dev/" || df -h /
+            docker system df
+            
+            # 2. Синхронизация кода
+            echo "=== Git sync ==="
             git fetch origin
             git reset --hard origin/main
-
-            echo ">>> Server cleanup (safe)"
-            docker image prune -f || true
+            
+            # 3. Остановка старых контейнеров (освобождает память)
+            echo "=== Stopping old containers ==="
+            docker compose stop || true
+            
+            # 4. Агрессивная очистка Docker (безопасная для продакшена)
+            echo "=== Docker cleanup ==="
+            # Удаляем неиспользуемые образы старше 1 часа
+            docker image prune -a --filter "until=1h" -f || true
+            # Удаляем все образы с тегом <none>
+            docker images | grep "<none>" | awk '{print $3}' | xargs -r docker rmi -f || true
+            # Очищаем build cache
             docker builder prune -af || true
-            docker system prune -af --volumes || true
-
-            echo ">>> Build & up"
-            docker compose pull || true
-            docker compose build bot     # без --no-cache
+            # Удаляем остановленные контейнеры
+            docker container prune -f || true
+            # Удаляем неиспользуемые сети
+            docker network prune -f || true
+            # НЕ трогаем volumes с данными!
+            
+            # 5. Проверка места после очистки
+            echo "=== Disk space after cleanup ==="
+            df -h / | grep -E "^/dev/" || df -h /
+            
+            # 6. Сборка и запуск
+            echo "=== Building and starting containers ==="
+            docker compose pull postgres || true
+            docker compose build bot
             docker compose up -d
-
-            echo ">>> Post-clean (dangling layers)"
+            
+            # 7. Финальная очистка dangling образов
+            echo "=== Final cleanup ==="
             docker image prune -f || true
-
-            echo ">>> Status"
+            
+            # 8. Проверка статуса
+            echo "=== Container status ==="
+            sleep 5
             docker compose ps
-            docker compose logs -n 50 bot || true
+            
+            # 9. Health check
+            echo "=== Health check ==="
+            for i in {1..10}; do
+              if docker compose ps | grep -q "Up.*healthy"; then
+                echo "✓ Bot is healthy"
+                break
+              elif [ $i -eq 10 ]; then
+                echo "⚠ Bot health check timeout"
+              else
+                echo "Waiting for bot to be healthy... ($i/10)"
+                sleep 3
+              fi
+            done
+            
+            # 10. Логи для диагностики
+            echo "=== Recent logs ==="
+            docker compose logs --tail=30 bot || true
+            
+            # 11. Финальная проверка места
+            echo "=== Final disk usage ==="
+            df -h / | grep -E "^/dev/" || df -h /
+            docker system df
