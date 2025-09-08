@@ -34,7 +34,10 @@ WORKDIR /app
 # Только runtime библиотеки
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        sqlite3 \
+    ; \
     rm -rf /var/lib/apt/lists/*
 
 # Пользователь до COPY, чтобы использовать --chown
@@ -56,7 +59,7 @@ RUN if [ ! -f config.py ]; then \
     'def _b(v: str) -> bool: return str(v).lower() in ("1","true","yes","y","on")' \
     'TOKEN = os.getenv("TOKEN") or os.getenv("BOT_TOKEN", "")' \
     'BOT_TOKEN = TOKEN' \
-    'DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///data/db.sqlite3")' \
+    'DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:////app/data/db.sqlite3")' \
     'N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")' \
     'CHANNEL_URL = os.getenv("CHANNEL_URL", "")' \
     'DEBUG = _b(os.getenv("DEBUG", "false"))' \
