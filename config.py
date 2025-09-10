@@ -22,6 +22,7 @@ DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///data/db.sqlite3")
 
 # Webhook для интеграции с n8n
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
+N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "")
 
 # URL канала
 CHANNEL_URL = os.getenv("CHANNEL_URL", "")
