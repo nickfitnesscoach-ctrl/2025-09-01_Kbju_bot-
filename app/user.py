@@ -251,6 +251,37 @@ def _activity_label_from_buttons(raw: str) -> str:
 
 
 # ---------------------------
+# Helper функции
+# ---------------------------
+
+def _user_to_dict(user) -> dict:
+    """Преобразовать ORM-объект User в dict для webhook."""
+    if not user:
+        return {}
+    return {
+        "tg_id": user.tg_id or 0,
+        "username": user.username or "",
+        "first_name": user.first_name or "",
+        "gender": user.gender or "",
+        "age": user.age or 0,
+        "weight": float(user.weight or 0.0),
+        "height": int(user.height or 0),
+        "activity": user.activity or "",
+        "goal": user.goal or "",
+        "calories": int(user.calories or 0),
+        "proteins": int(user.proteins or 0),
+        "fats": int(user.fats or 0),
+        "carbs": int(user.carbs or 0),
+        "funnel_status": user.funnel_status or "",
+        "priority": user.priority or "",
+        "priority_score": user.priority_score or 0,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        "calculated_at": user.calculated_at.isoformat() if user.calculated_at else None,
+    }
+
+
+# ---------------------------
 # Хэндлеры
 # ---------------------------
 
@@ -467,7 +498,7 @@ async def process_activity(callback: CallbackQuery, state: FSMContext):
 @rate_limit
 @error_handler
 async def process_goal(callback: CallbackQuery, state: FSMContext):
-    """Финал — считаем КБЖУ, показываем результат, ставим таймер и отложенное предложение."""
+    """Финал — считаем КБЖУ, показываем результат, ставим таймер, отправляем вебхук и отложенное предложение."""
     if not (callback.from_user and callback.message and callback.data):
         return
 
@@ -485,11 +516,13 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
         # Показываем результаты пользователю
         await show_kbju_results(callback, kbju, goal)
         
-        # Отправляем calculated lead в n8n
+        # ВАЖНО: Отправляем calculated lead в n8n
         user_data = await get_user(callback.from_user.id)
         if user_data:
-            print(f"[Webhook DEBUG] Отправляем лид {user_data.tg_id} → статус {user_data.funnel_status}")
+            logger.info(f"[Webhook] Отправляем calculated lead: {user_data.tg_id}, статус: {user_data.funnel_status}")
             await WebhookService.send_calculated_lead(_user_to_dict(user_data))
+        else:
+            logger.warning(f"[Webhook] Не удалось получить данные пользователя {callback.from_user.id} для отправки calculated lead")
         
         # Планируем отложенное предложение
         schedule_delayed_offer(callback.from_user.id, callback.message.chat.id)
@@ -641,28 +674,3 @@ async def process_cold_lead(callback: CallbackQuery):
         parse_mode="HTML",
     )
     await callback.answer()
-
-
-# ---------------------------
-# Helpers
-# ---------------------------
-
-def _user_to_dict(user) -> dict:
-    """Преобразовать ORM-объект User в dict для webhook."""
-    if not user:
-        return {}
-    return {
-        "tg_id": user.tg_id or 0,
-        "username": user.username or "",
-        "first_name": user.first_name or "",
-        "gender": user.gender or "",
-        "age": user.age or 0,
-        "weight": float(user.weight or 0.0),
-        "height": int(user.height or 0),
-        "activity": user.activity or "",
-        "goal": user.goal or "",
-        "calories": int(user.calories or 0),
-        "proteins": int(user.proteins or 0),
-        "fats": int(user.fats or 0),
-        "carbs": int(user.carbs or 0),
-    }
