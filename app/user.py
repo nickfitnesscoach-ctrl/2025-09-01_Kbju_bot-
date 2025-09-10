@@ -476,19 +476,38 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
         data = await state.get_data()
         data["goal"] = goal
 
+        # Рассчитываем КБЖУ и сохраняем данные пользователя
         kbju = await calculate_and_save_kbju(callback.from_user.id, data)
-        await start_funnel_timer(callback.from_user.id)
+        
+        # Запускаем таймер для воронки
+        asyncio.create_task(start_funnel_timer(callback.from_user.id))
+        
+        # Показываем результаты пользователю
         await show_kbju_results(callback, kbju, goal)
-        await callback.answer()
-        await state.clear()
-
+        
+        # Отправляем calculated lead в n8n
+        user_data = await get_user(callback.from_user.id)
+        if user_data:
+            print(f"[Webhook DEBUG] Отправляем лид {user_data.tg_id} → статус {user_data.funnel_status}")
+            await WebhookService.send_calculated_lead(_user_to_dict(user_data))
+        
+        # Планируем отложенное предложение
         schedule_delayed_offer(callback.from_user.id, callback.message.chat.id)
+        
+        # Обязательно отвечаем на callback, чтобы Telegram не показывал ошибку
+        await callback.answer()
+
+        # Очищаем состояние
+        await state.clear()
 
     except Exception as e:
         logger.exception("process_goal error: %s", e)
-        await callback.message.edit_text(get_text("errors.calculation_error"), reply_markup=back_to_menu(), parse_mode="HTML")
-        await callback.answer()
-        await state.clear()
+        try:
+            await callback.message.edit_text(get_text("errors.calculation_error"), reply_markup=back_to_menu(), parse_mode="HTML")
+            await callback.answer()
+            await state.clear()
+        except Exception as e2:
+            logger.exception("Failed to send error message: %s", e2)
 
 
 @user.callback_query(F.data == "delayed_yes")

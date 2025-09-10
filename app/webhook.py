@@ -226,6 +226,13 @@ class WebhookService:
         if "funnel_status" not in user_data:
             user_data["funnel_status"] = "coldlead"
         return await send_lead_dict_to_n8n(user_data, "cold_lead")
+    
+    @staticmethod
+    async def send_calculated_lead(user_data: dict):
+        """Отправить calculated лид"""
+        if "funnel_status" not in user_data:
+            user_data["funnel_status"] = "calculated"
+        return await send_lead_dict_to_n8n(user_data, "calculated_lead")
 
 
 class TimerService:
