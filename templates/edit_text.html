@@ -25,6 +25,7 @@
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('save_text') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="text_key" value="{{ text_key }}">
                     
                     <div class="mb-3">
