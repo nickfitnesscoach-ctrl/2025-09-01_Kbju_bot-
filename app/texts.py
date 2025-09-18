@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict, Optional
 
@@ -22,6 +23,8 @@ TEXTS: Dict[str, Any] = {}
 
 # Кэш времени последней модификации файла, чтобы не читать его лишний раз
 _LAST_MTIME: Optional[float] = None
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------
@@ -90,9 +93,8 @@ def load_texts(force: bool = False) -> None:
         TEXTS.clear()
         _deep_update(TEXTS, data)
         _LAST_MTIME = mtime
-    except Exception as e:
-        # Логгер здесь не используем специально, чтобы модуль был «чистым».
-        print(f"[texts] Ошибка загрузки {path}: {e}")
+    except Exception:
+        logger.exception("Failed to load texts from %s", path)
 
 
 def save_texts() -> None:
@@ -110,8 +112,8 @@ def save_texts() -> None:
             _LAST_MTIME = os.path.getmtime(path)
         except OSError:
             pass
-    except Exception as e:
-        print(f"[texts] Ошибка сохранения {path}: {e}")
+    except Exception:
+        logger.exception("Failed to save texts to %s", path)
 
 
 # ---------------------------
