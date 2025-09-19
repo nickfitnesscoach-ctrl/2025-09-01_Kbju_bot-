@@ -1,6 +1,7 @@
 # app/admin.py
 from __future__ import annotations
 
+import logging
 from typing import Optional, List
 
 from aiogram import Router, F
@@ -12,17 +13,23 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
 
 from app.database.requests import get_hot_leads
 from app.states import AdminStates
 from app.texts import get_text, get_button_text
 from app.calculator import get_goal_description, get_activity_description
+from config import ADMIN_CHAT_ID
+from utils.notifications import CONTACT_REQUEST_MESSAGE
 
 
 # ----------------------------
 # Router
 # ----------------------------
 admin = Router()
+
+
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------
@@ -33,7 +40,7 @@ class Admin(Filter):
 
     def __init__(self, admin_ids: Optional[List[int]] = None):
         # Задай свой ID здесь или передавай извне.
-        self.admins = admin_ids or [310151740]
+        self.admins = admin_ids or [ADMIN_CHAT_ID]
 
     async def __call__(self, message: Message) -> bool:
         return bool(message.from_user and message.from_user.id in self.admins)
@@ -215,6 +222,50 @@ async def admin_prev_lead(callback: CallbackQuery, state: FSMContext) -> None:
     if leads:
         await _show_lead_card(callback, state, leads, prev_idx)
     await callback.answer()
+
+
+@admin.callback_query(F.data.startswith("lead_contact:"))
+async def admin_contact_lead(callback: CallbackQuery) -> None:
+    """Отправить лиду служебное сообщение по запросу админа."""
+    admin_id = callback.from_user.id if callback.from_user else None
+    logger.info("Admin %s pressed lead_contact button with data %s", admin_id, callback.data)
+
+    if admin_id != ADMIN_CHAT_ID:
+        logger.warning("Unauthorized lead_contact button press from %s", admin_id)
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    try:
+        _, tg_id_str = callback.data.split(":", 1)
+        lead_id = int(tg_id_str)
+    except (AttributeError, ValueError):
+        logger.warning("Invalid lead_contact payload: %s", callback.data)
+        await callback.answer("Некорректные данные", show_alert=True)
+        return
+
+    bot = callback.message.bot if callback.message else None
+    if bot is None:
+        logger.error("Cannot access bot instance to contact lead %s", lead_id)
+        await callback.answer("Ошибка отправки", show_alert=True)
+        return
+
+    try:
+        await bot.send_message(chat_id=lead_id, text=CONTACT_REQUEST_MESSAGE)
+    except TelegramForbiddenError as exc:
+        logger.warning("Lead %s blocked bot while sending contact prompt: %s", lead_id, exc)
+        await callback.answer("Бот не может написать лиду", show_alert=True)
+        return
+    except (TelegramBadRequest, TelegramNetworkError) as exc:
+        logger.error("Failed to deliver contact prompt to lead %s: %s", lead_id, exc)
+        await callback.answer("Не удалось отправить", show_alert=True)
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error while sending contact prompt to %s: %s", lead_id, exc)
+        await callback.answer("Ошибка отправки", show_alert=True)
+        return
+
+    logger.info("Contact prompt delivered to lead %s", lead_id)
+    await callback.answer("Сообщение отправлено")
 
 
 @admin.callback_query(F.data == "admin_menu")
