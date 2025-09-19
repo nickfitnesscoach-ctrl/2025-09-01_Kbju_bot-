@@ -143,10 +143,10 @@ async def safe_db_operation(operation, *args, **kwargs):
         return await asyncio.wait_for(operation(*args, **kwargs), timeout=DB_OPERATION_TIMEOUT)
     except asyncio.TimeoutError:
         logger.error("DB timeout: %s", getattr(operation, "__name__", str(operation)))
-        return None
-    except Exception as e:
-        logger.exception("DB error in %s: %s", getattr(operation, "__name__", str(operation)), e)
-        return None
+        return False
+    except Exception as exc:
+        logger.exception("DB error in %s: %s", getattr(operation, "__name__", str(operation)), exc)
+        return False
 
 
 def get_advice_by_goal(goal: str) -> str:
@@ -195,13 +195,17 @@ async def start_funnel_timer(user_id: int) -> None:
     await TimerService.start_calculated_timer(user_id, delay_minutes=DEFAULT_CALCULATED_TIMER_DELAY)
 
 
+_delayed_offer_tasks: dict[int, asyncio.Task] = {}
+
+
 async def send_delayed_offer(user_id: int, chat_id: int):
     """Отложенное сообщение с предложением (через DELAYED_OFFER_DELAY секунд)."""
     from aiogram import Bot
     from config import TOKEN
 
-    await asyncio.sleep(DELAYED_OFFER_DELAY)
+    bot: Bot | None = None
     try:
+        await asyncio.sleep(DELAYED_OFFER_DELAY)
         bot = Bot(token=TOKEN)
         await bot.send_message(
             chat_id=chat_id,
@@ -209,14 +213,28 @@ async def send_delayed_offer(user_id: int, chat_id: int):
             reply_markup=delayed_offer_keyboard(),
             parse_mode="HTML",
         )
-        await bot.session.close()
-    except Exception as e:
-        logger.error("Error sending delayed offer to %s: %s", user_id, e)
+    except asyncio.CancelledError:
+        logger.debug("Delayed offer task for user %s was cancelled", user_id)
+    except Exception as exc:
+        logger.error("Error sending delayed offer to %s: %s", user_id, exc)
+    finally:
+        if bot:
+            await bot.session.close()
+        _delayed_offer_tasks.pop(user_id, None)
 
 
 def schedule_delayed_offer(user_id: int, chat_id: int) -> None:
     """Поставить отложенное сообщение в очередь."""
-    asyncio.create_task(send_delayed_offer(user_id, chat_id))
+    cancel_delayed_offer(user_id)
+    task = asyncio.create_task(send_delayed_offer(user_id, chat_id))
+    _delayed_offer_tasks[user_id] = task
+
+
+def cancel_delayed_offer(user_id: int) -> None:
+    """Отменить запланированную отправку отложенного предложения."""
+    task = _delayed_offer_tasks.pop(user_id, None)
+    if task and not task.done():
+        task.cancel()
 
 
 async def send_welcome_sequence(message: Message):

@@ -1,143 +1,171 @@
-# app/admin_panel.py
-from flask import Flask, render_template, request, redirect, url_for, session, flash
-from flask_wtf.csrf import CSRFProtect
-import json
-import os
-from functools import wraps
-from dotenv import load_dotenv
+"""Flask-based admin panel for managing bot texts."""
 
-# Загружаем переменные из .env файла
+import json
+import logging
+import os
+import secrets
+from functools import wraps
+
+from dotenv import load_dotenv
+from flask import Flask, flash, redirect, render_template, request, session, url_for
+from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import check_password_hash, generate_password_hash
+
 load_dotenv()
 
-# Создаем Flask-приложение
-app = Flask(__name__, template_folder=os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates'))
-app.secret_key = os.getenv('SECRET_KEY', 'your-secret-key-here')
+logger = logging.getLogger(__name__)
+
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
+TEXTS_FILE = os.path.join(os.path.dirname(__file__), "texts_data.json")
+
+
+def _load_secret_key() -> str:
+    secret_key = os.getenv("SECRET_KEY")
+    if secret_key:
+        return secret_key
+
+    generated = secrets.token_hex(32)
+    logger.warning("SECRET_KEY is not set; generated ephemeral key for current session")
+    return generated
+
+
+def _load_password_hash() -> str:
+    password_hash = os.getenv("ADMIN_PASSWORD_HASH")
+    if password_hash:
+        return password_hash
+
+    plain_password = os.getenv("ADMIN_PASSWORD")
+    if plain_password:
+        logger.warning(
+            "ADMIN_PASSWORD is configured in plaintext; hashing at runtime. "
+            "Set ADMIN_PASSWORD_HASH to avoid storing secrets in clear text."
+        )
+        return generate_password_hash(plain_password)
+
+    raise RuntimeError(
+        "Admin panel password is not configured. Set ADMIN_PASSWORD_HASH environment variable."
+    )
+
+
+app = Flask(__name__, template_folder=TEMPLATES_DIR)
+app.secret_key = _load_secret_key()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 csrf = CSRFProtect(app)
 
-# Путь к файлу с текстами
-TEXTS_FILE = os.path.join(os.path.dirname(__file__), 'texts_data.json')
+PASSWORD_HASH = _load_password_hash()
 
-# Загрузка текстов из файла
+
 def load_texts():
+    """Load all bot texts from storage."""
     try:
-        with open(TEXTS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        with open(TEXTS_FILE, "r", encoding="utf-8") as fp:
+            return json.load(fp)
     except FileNotFoundError:
+        logger.warning("Texts file %s not found; returning empty mapping", TEXTS_FILE)
         return {}
 
-# Сохранение текстов в файл
-def save_texts(texts):
-    with open(TEXTS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(texts, f, ensure_ascii=False, indent=2)
 
-# Декоратор для проверки аутентификации
-def login_required(f):
-    @wraps(f)
+def save_texts(texts):
+    """Persist bot texts to storage."""
+    with open(TEXTS_FILE, "w", encoding="utf-8") as fp:
+        json.dump(texts, fp, ensure_ascii=False, indent=2)
+
+
+def login_required(func):
+    """Ensure the user is authenticated before accessing the view."""
+
+    @wraps(func)
     def decorated_function(*args, **kwargs):
-        if 'authenticated' not in session:
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
+        if not session.get("authenticated"):
+            return redirect(url_for("login"))
+        return func(*args, **kwargs)
+
     return decorated_function
 
-# Главная страница админ-панели
-@app.route('/')
+
+@app.route("/")
 @login_required
 def index():
     texts = load_texts()
-    return render_template('index.html', texts=texts)
+    return render_template("index.html", texts=texts)
 
-# Страница входа
-@app.route('/login', methods=['GET', 'POST'])
+
+def _verify_password(password: str) -> bool:
+    return check_password_hash(PASSWORD_HASH, password)
+
+
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == 'POST':
-        password = request.form['password']
-        expected_password = os.getenv('ADMIN_PASSWORD', 'admin')
-        # Debug information
-        print(f"Entered password: {password}")
-        print(f"Expected password: {expected_password}")
-        print(f"Password match: {password == expected_password}")
-        # В реальном приложении здесь должна быть проверка пароля
-        # Например, через хэширование и сравнение с сохраненным хэшем
-        if password == expected_password:  # Простая проверка пароля
-            session['authenticated'] = True
-            return redirect(url_for('index'))
-        else:
-            flash('Неверный пароль', 'error')
-    return render_template('login.html')
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        if _verify_password(password):
+            session["authenticated"] = True
+            session.permanent = False
+            return redirect(url_for("index"))
 
-# Выход из админ-панели
-@app.route('/logout')
+        logger.info("Failed admin login attempt")
+        flash("Неверный пароль", "error")
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
 def logout():
-    session.pop('authenticated', None)
-    return redirect(url_for('login'))
+    session.pop("authenticated", None)
+    return redirect(url_for("login"))
 
-# Редактирование текста
-@app.route('/edit/<path:text_key>')
+
+@app.route("/edit/<path:text_key>")
 @login_required
 def edit_text(text_key):
     texts = load_texts()
-    # Навигация по вложенным ключам
-    keys = text_key.split('.')
+    keys = text_key.split(".")
     value = texts
+
     for key in keys:
         if isinstance(value, dict) and key in value:
             value = value[key]
         else:
             value = None
             break
-    
-    return render_template('edit_text.html', text_key=text_key, text_data=value)
 
-# Сохранение текста
-@app.route('/save_text', methods=['POST'])
+    return render_template("edit_text.html", text_key=text_key, text_data=value)
+
+
+@app.route("/save_text", methods=["POST"])
 @login_required
 def save_text():
-    text_key = request.form['text_key']
-    text_content = request.form['text_content']
-    password = request.form['password']
-    
-    expected_password = os.getenv('ADMIN_PASSWORD', 'admin')
-    # Debug information
-    print(f"Entered save password: {password}")
-    print(f"Expected save password: {expected_password}")
-    print(f"Save password match: {password == expected_password}")
-    
-    # Проверка пароля (в реальном приложении используйте хэширование)
-    if password != expected_password:
-        flash('Неверный пароль для сохранения', 'error')
-        return redirect(url_for('edit_text', text_key=text_key))
-    
-    # Загрузка и обновление текстов
+    text_key = request.form["text_key"]
+    text_content = request.form["text_content"]
+    password = request.form.get("password", "")
+
+    if not _verify_password(password):
+        logger.info("Rejected save attempt for %s due to invalid password", text_key)
+        flash("Неверный пароль для сохранения", "error")
+        return redirect(url_for("edit_text", text_key=text_key))
+
     texts = load_texts()
-    keys = text_key.split('.')
+    keys = text_key.split(".")
     current = texts
-    
-    # Навигация к нужному ключу (кроме последнего)
+
     for key in keys[:-1]:
-        if key not in current:
+        if key not in current or not isinstance(current[key], dict):
             current[key] = {}
         current = current[key]
-    
-    # Обновление значения
+
     current[keys[-1]] = text_content
-    
-    # Сохранение в файл
     save_texts(texts)
-    flash('Текст успешно сохранен', 'success')
-    return redirect(url_for('index'))
+    flash("Текст успешно сохранен", "success")
+    return redirect(url_for("index"))
 
-# Эндпоинт для проверки состояния сервиса
-@app.route('/health')
+
+@app.route("/health")
 def health():
-    return {'status': 'ok'}
+    return {"status": "ok"}
 
-# Debug endpoint to check environment variables
-@app.route('/debug')
-def debug():
-    return {
-        'ADMIN_PASSWORD': os.getenv('ADMIN_PASSWORD', 'NOT SET'),
-        'SECRET_KEY': os.getenv('SECRET_KEY', 'NOT SET')[:10] + '...' if os.getenv('SECRET_KEY') else 'NOT SET'
-    }
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080, debug=False)
