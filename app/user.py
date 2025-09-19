@@ -919,11 +919,12 @@ async def lead_delete_confirm(callback: CallbackQuery) -> None:
     await callback.answer("Удалено")
 
 
-@user.message(CommandStart())
+@user.message(CommandStart(), F.chat.type == "private")
 @rate_limit
 @error_handler
 async def cmd_start(message: Message):
     """Команда /start — создаём пользователя (если нужно) и показываем приветствие."""
+    logger.debug("/start entered for user %s in chat %s", message.from_user.id if message.from_user else "unknown", message.chat.id if message.chat else "unknown")
     if not message.from_user or not message.from_user.id:
         logger.warning("Start without user info")
         return
@@ -942,6 +943,15 @@ async def cmd_start(message: Message):
         return
 
     await send_welcome_sequence(message)
+
+
+@user.message(Command("ping"), F.chat.type == "private")
+@rate_limit
+@error_handler
+async def cmd_ping(message: Message):
+    """Быстрая проверка доступности бота."""
+    logger.debug("/ping entered for user %s", message.from_user.id if message.from_user else "unknown")
+    await message.answer("pong")
 
 
 @user.callback_query(F.data == "main_menu")
