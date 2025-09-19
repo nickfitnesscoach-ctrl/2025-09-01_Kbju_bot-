@@ -175,8 +175,15 @@ def _admin_menu_text() -> str:
         ("/photo_id", "показать file_id фото из сообщения-реплая"),
     ]
 
+    nbsp = "\u00A0"
+
+    def _clickable_command(cmd: str) -> str:
+        """Вернуть команду с неразрывными пробелами для кликабельности."""
+
+        return cmd.replace(" ", nbsp)
+
     lines = [base, "", "Доступные команды:"]
-    lines.extend(f"{command} — {description}" for command, description in commands)
+    lines.extend(f"{_clickable_command(command)} — {description}" for command, description in commands)
     return "\n".join(lines)
 
 
