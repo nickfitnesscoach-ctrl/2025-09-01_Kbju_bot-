@@ -46,6 +46,7 @@ from app.keyboards import (
 from app.states import KBJUStates
 from app.texts import get_text, get_button_text
 from app.webhook import TimerService, WebhookService
+from utils.notifications import notify_new_lead
 from config import CHANNEL_URL
 
 
@@ -172,6 +173,10 @@ async def calculate_and_save_kbju(user_id: int, user_data: dict) -> dict:
         calculated_at=datetime.utcnow(),
         priority_score=PRIORITY_SCORES["new"],
     )
+    # Уведомляем админа (не блокируем UI — запускаем как задачу)
+    name = user_data.get("first_name") or user_data.get("username") or str(user_id)
+    contact = user_data.get("username") and f"@{user_data['username']}" or "—"
+    asyncio.create_task(notify_new_lead(name=name, contact=contact))
     return kbju
 
 

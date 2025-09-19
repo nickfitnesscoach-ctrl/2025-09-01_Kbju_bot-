@@ -22,6 +22,9 @@ TELEGRAM_BOT_TOKEN = (
 TOKEN = TELEGRAM_BOT_TOKEN
 BOT_TOKEN = TELEGRAM_BOT_TOKEN
 
+# Администратор
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "310151740"))
+
 # База данных
 DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///data/db.sqlite3")
 

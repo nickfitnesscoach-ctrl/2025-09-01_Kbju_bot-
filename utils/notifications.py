@@ -5,10 +5,9 @@ from typing import Optional
 import aiohttp
 from aiohttp import ClientError, ClientTimeout
 
-from config import TELEGRAM_BOT_TOKEN
+from config import ADMIN_CHAT_ID, TELEGRAM_BOT_TOKEN
 
 TELEGRAM_API_URL = "https://api.telegram.org"
-ADMIN_CHAT_ID = 310151740
 
 logger = logging.getLogger(__name__)
 
