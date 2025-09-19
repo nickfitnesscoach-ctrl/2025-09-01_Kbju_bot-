@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import desc, select
 
 from app.database.models import User, async_session
-from utils.notifications import notify_lead_card, notify_lead_summary
+from utils.notifications import notify_lead_card
 
 
 logger = logging.getLogger(__name__)
@@ -55,14 +55,6 @@ async def set_user(tg_id: int, username: str | None = None, first_name: str | No
         await notify_lead_card(lead_payload)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to send lead card notification: %s", exc)
-
-    contact = f"@{username}" if username else f"tg_id: {tg_id}"
-    display_name = first_name or username or str(tg_id)
-
-    try:
-        await notify_lead_summary(display_name, contact)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to send short lead notification: %s", exc)
 
 
 async def get_user(tg_id: int) -> User | None:

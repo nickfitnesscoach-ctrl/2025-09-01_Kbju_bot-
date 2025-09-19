@@ -12,10 +12,12 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ForceReply,
 )
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
 
 from app.database.requests import get_hot_leads
+from app.contact_requests import contact_request_registry
 from app.states import AdminStates
 from app.texts import get_text, get_button_text, set_media_id
 from app.calculator import get_goal_description, get_activity_description
@@ -298,7 +300,11 @@ async def admin_contact_lead(callback: CallbackQuery) -> None:
         return
 
     try:
-        await bot.send_message(chat_id=lead_id, text=CONTACT_REQUEST_MESSAGE)
+        await bot.send_message(
+            chat_id=lead_id,
+            text=CONTACT_REQUEST_MESSAGE,
+            reply_markup=ForceReply(input_field_placeholder="Напишите сообщение админу"),
+        )
     except TelegramForbiddenError as exc:
         logger.warning("Lead %s blocked bot while sending contact prompt: %s", lead_id, exc)
         await callback.answer("Бот не может написать лиду", show_alert=True)
@@ -313,6 +319,7 @@ async def admin_contact_lead(callback: CallbackQuery) -> None:
         return
 
     logger.info("Contact prompt delivered to lead %s", lead_id)
+    await contact_request_registry.add(lead_id)
     await callback.answer("Сообщение отправлено")
 
 

@@ -165,34 +165,3 @@ async def notify_lead_card(user: Mapping[str, Any] | Any) -> None:
         return
 
     await send_telegram_message(text, parse_mode="HTML", reply_markup=markup)
-
-
-def format_lead_message(name: str, contact: str) -> str:
-    """Сформировать текст уведомления о новом лиде."""
-
-    raw_name = (name or "").strip()
-    raw_contact = (contact or "").strip()
-
-    details: list[str] = []
-
-    if raw_name and not raw_name.isdigit() and raw_name.casefold() != "не указано":
-        details.append(raw_name)
-
-    contact_lower = raw_contact.casefold()
-    if (
-        raw_contact
-        and contact_lower not in {"—", "не указано", "контакт не указан"}
-        and not contact_lower.startswith("tg_id")
-    ):
-        details.append(raw_contact)
-
-    if details:
-        return f"Новый лид: {', '.join(details)}"
-    return "Новый лид"
-
-
-async def notify_lead_summary(name: str, contact: str) -> None:
-    """Отправить админу короткое уведомление о новом лиде."""
-
-    message = format_lead_message(name, contact)
-    await send_telegram_message(message)
