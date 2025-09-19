@@ -100,6 +100,9 @@ def build_lead_card(user: Mapping[str, Any] | Any) -> Tuple[str, dict]:
                 {"text": "📨 Связаться", "callback_data": f"lead_contact:{tg_id_int}"},
                 {"text": "📝 Написать от бота", "callback_data": f"lead_reply:{tg_id_int}"},
             ],
+            [
+                {"text": "🗑 Удалить лида", "callback_data": f"lead_delete:{tg_id_int}"},
+            ],
         ]
     }
 

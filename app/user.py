@@ -44,6 +44,7 @@ from app.constants import (
 )
 from app.database.requests import (
     count_started_leads,
+    delete_user_by_tg_id,
     get_started_leads,
     get_user,
     set_user,
@@ -748,6 +749,174 @@ async def paginate_leads(callback: CallbackQuery) -> None:
         logger.warning("Callback without message for leads pagination")
 
     await callback.answer()
+
+
+def _parse_tg_id_from_callback(data: str, prefix: str) -> int | None:
+    if not data.startswith(prefix):
+        return None
+
+    try:
+        tg_id_value = int(data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        return None
+
+    return tg_id_value
+
+
+def _build_lead_delete_confirmation_markup(tg_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Да",
+                    callback_data=f"lead_delete_confirm:{tg_id}",
+                ),
+                InlineKeyboardButton(
+                    text="✖️ Нет",
+                    callback_data="lead_delete_cancel",
+                ),
+            ]
+        ]
+    )
+
+
+@user.callback_query(F.data.startswith("lead_delete:"))
+@rate_limit
+@error_handler
+async def lead_delete_request(callback: CallbackQuery) -> None:
+    """Показать подтверждение удаления лида."""
+
+    if not callback.from_user:
+        return
+
+    if not _is_admin(callback.from_user.id):
+        logger.warning(
+            "Non-admin user %s attempted to initiate lead deletion", callback.from_user.id
+        )
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    data = callback.data or ""
+    tg_id = _parse_tg_id_from_callback(data, "lead_delete:")
+    if tg_id is None:
+        logger.error("Failed to parse lead deletion request from data: %s", data)
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    if not callback.message:
+        logger.warning("Lead delete request without message for tg_id %s", tg_id)
+        await callback.answer("Нет сообщения", show_alert=True)
+        return
+
+    confirmation_text = (
+        "Вы уверены, что хотите удалить лида "
+        f"<code>{tg_id}</code>?"
+    )
+
+    try:
+        await callback.message.reply(
+            confirmation_text,
+            parse_mode="HTML",
+            reply_markup=_build_lead_delete_confirmation_markup(tg_id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to send lead delete confirmation for %s: %s", tg_id, exc)
+        await callback.answer("Не удалось", show_alert=True)
+        return
+
+    await callback.answer()
+
+
+@user.callback_query(F.data == "lead_delete_cancel")
+@rate_limit
+@error_handler
+async def lead_delete_cancel(callback: CallbackQuery) -> None:
+    """Отменить удаление лида."""
+
+    if not callback.from_user:
+        return
+
+    if not _is_admin(callback.from_user.id):
+        logger.warning(
+            "Non-admin user %s attempted to cancel lead deletion", callback.from_user.id
+        )
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    if callback.message:
+        try:
+            await callback.message.delete()
+        except TelegramBadRequest as exc:
+            logger.warning("Failed to delete lead delete confirmation message: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Unexpected error when deleting confirmation message: %s", exc)
+
+    await callback.answer("Отменено")
+
+
+@user.callback_query(F.data.startswith("lead_delete_confirm:"))
+@rate_limit
+@error_handler
+async def lead_delete_confirm(callback: CallbackQuery) -> None:
+    """Удалить лида после подтверждения."""
+
+    if not callback.from_user:
+        return
+
+    if not _is_admin(callback.from_user.id):
+        logger.warning(
+            "Non-admin user %s attempted to confirm lead deletion", callback.from_user.id
+        )
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    data = callback.data or ""
+    tg_id = _parse_tg_id_from_callback(data, "lead_delete_confirm:")
+    if tg_id is None:
+        logger.error("Failed to parse lead deletion confirmation from data: %s", data)
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    deletion_result = await safe_db_operation(delete_user_by_tg_id, tg_id)
+
+    if not deletion_result:
+        logger.warning("Lead deletion failed for tg_id %s", tg_id)
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    "⚠️ Не удалось удалить лида. Попробуйте позже.",
+                    parse_mode="HTML",
+                    reply_markup=None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Failed to update confirmation message after error: %s", exc)
+        await callback.answer("Не удалось", show_alert=True)
+        return
+
+    if callback.message:
+        success_text = (
+            f"✅ Лид <code>{tg_id}</code> удалён.\n"
+            "Если карточка всё ещё отображается, нажмите «🔄 Обновить»."
+        )
+        try:
+            await callback.message.edit_text(
+                success_text,
+                parse_mode="HTML",
+                reply_markup=None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to edit confirmation message after deletion: %s", exc)
+
+        original_message = callback.message.reply_to_message
+        if original_message:
+            try:
+                await original_message.delete()
+            except TelegramBadRequest as exc:
+                logger.warning("Failed to delete original lead card message: %s", exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Unexpected error when deleting lead card message: %s", exc)
+
+    await callback.answer("Удалено")
 
 
 @user.message(CommandStart())
