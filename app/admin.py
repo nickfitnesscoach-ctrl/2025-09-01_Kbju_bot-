@@ -164,12 +164,26 @@ def _admin_menu_text() -> str:
     commands: list[tuple[str, str]] = [
         ("/admin", "показать эту подсказку"),
         ("/leads", "список горячих лидов"),
+        (
+            "/all_leads",
+            "показать первую страницу (по 10 карточек), как уведомления о новом лиде",
+        ),
+        ("/all_leads 2", "перейти на указанную страницу"),
+        ("/all_leads today", "лиды за последние 24 часа"),
+        ("/all_leads 7d", "лиды за последние 7 дней"),
         ("/set_coach_photo", "подсказка по обновлению приветственного фото"),
         ("/photo_id", "показать file_id фото из сообщения-реплая"),
     ]
 
+    nbsp = "\u00A0"
+
+    def _clickable_command(cmd: str) -> str:
+        """Вернуть команду с неразрывными пробелами для кликабельности."""
+
+        return cmd.replace(" ", nbsp)
+
     lines = [base, "", "Доступные команды:"]
-    lines.extend(f"{command} — {description}" for command, description in commands)
+    lines.extend(f"{_clickable_command(command)} — {description}" for command, description in commands)
     return "\n".join(lines)
 
 
