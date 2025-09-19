@@ -424,6 +424,19 @@ def _is_admin(user_id: int | None) -> bool:
     return user_id == ADMIN_CHAT_ID
 
 
+async def _ensure_admin_access(message: Message) -> bool:
+    """Убедиться, что сообщение отправлено администратором."""
+
+    if not message.from_user:
+        return False
+
+    if not _is_admin(message.from_user.id):
+        await message.answer("Недостаточно прав.")
+        return False
+
+    return True
+
+
 def _normalize_leads_window(window: str | None) -> str:
     if not window:
         return DEFAULT_LEADS_WINDOW
@@ -460,6 +473,28 @@ def _parse_leads_command_args(args: str | None) -> tuple[int, str]:
             page = page_value
 
     return page, window
+
+
+def _parse_page_arg(args: str | None) -> int:
+    """Извлечь номер страницы из аргументов команды."""
+
+    if not args:
+        return 1
+
+    for token in args.split():
+        token = token.strip()
+        if not token:
+            continue
+
+        try:
+            page_value = int(token)
+        except ValueError:
+            continue
+
+        if page_value > 0:
+            return page_value
+
+    return 1
 
 
 def _get_since_for_window(window: str) -> datetime | None:
@@ -580,26 +615,7 @@ async def _send_lead_cards(message: Message, leads: list[Any]) -> None:
         await asyncio.sleep(0.05)
 
 
-# ---------------------------
-# Хэндлеры
-# ---------------------------
-
-@user.message(Command("all_leads"))
-@rate_limit
-@error_handler
-async def cmd_all_leads(message: Message, command: CommandObject) -> None:
-    """Отобразить список лидов для администратора."""
-
-    if not message.from_user:
-        return
-
-    if not _is_admin(message.from_user.id):
-        await message.answer("Недостаточно прав.")
-        return
-
-    args = command.args if command else None
-    page, window = _parse_leads_command_args(args)
-
+async def _handle_all_leads_request(message: Message, page: int, window: str) -> None:
     try:
         leads, total_count, total_pages, current_page, window_key = await _load_leads_page(page, window)
     except Exception as exc:  # noqa: BLE001
@@ -620,6 +636,55 @@ async def cmd_all_leads(message: Message, command: CommandObject) -> None:
         await message.answer(pager_text, reply_markup=pager_markup)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to send leads pager: %s", exc)
+
+
+# ---------------------------
+# Хэндлеры
+# ---------------------------
+
+@user.message(Command("all_leads"))
+@rate_limit
+@error_handler
+async def cmd_all_leads(message: Message, command: CommandObject) -> None:
+    """Отобразить список лидов для администратора."""
+
+    if not await _ensure_admin_access(message):
+        return
+
+    args = command.args if command else None
+    page, window = _parse_leads_command_args(args)
+
+    await _handle_all_leads_request(message, page, window)
+
+
+@user.message(Command("all_leads_today"))
+@rate_limit
+@error_handler
+async def cmd_all_leads_today(message: Message, command: CommandObject) -> None:
+    """Отобразить лиды за последние 24 часа."""
+
+    if not await _ensure_admin_access(message):
+        return
+
+    args = command.args if command else None
+    page = _parse_page_arg(args)
+
+    await _handle_all_leads_request(message, page, "today")
+
+
+@user.message(Command("all_leads_7d"))
+@rate_limit
+@error_handler
+async def cmd_all_leads_7d(message: Message, command: CommandObject) -> None:
+    """Отобразить лиды за последние 7 дней."""
+
+    if not await _ensure_admin_access(message):
+        return
+
+    args = command.args if command else None
+    page = _parse_page_arg(args)
+
+    await _handle_all_leads_request(message, page, "7d")
 
 
 @user.callback_query(F.data.startswith("leads_page:"))
