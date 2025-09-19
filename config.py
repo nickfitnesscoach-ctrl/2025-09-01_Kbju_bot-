@@ -67,6 +67,7 @@ CHANNEL_URL = os.getenv("CHANNEL_URL", "")
 
 # Режим отладки
 DEBUG = _bool(os.getenv("DEBUG", "false"))
+ENABLE_HOT_LEAD_ALERTS = os.getenv("ENABLE_HOT_LEAD_ALERTS", "true").lower() == "true"
 
 # Напоминание пользователям, которые не завершили расчёт
 STALLED_REMINDER_DELAY_MIN = int(os.getenv("STALLED_REMINDER_DELAY_MIN", "120"))

@@ -10,7 +10,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.database.models import User, async_session
-from utils.notifications import notify_lead_card
+from utils.notifications import notify_lead_card, notify_new_hot_lead
 
 
 logger = logging.getLogger(__name__)
@@ -150,6 +150,10 @@ async def update_user_status(
 ) -> User | None:
     """Обновить статус воронки лидов и дополнительные данные."""
 
+    user_snapshot: dict[str, Any] | None = None
+    should_check_hot_lead = False
+    updated_user: User | None = None
+
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
@@ -163,9 +167,34 @@ async def update_user_status(
                 user.priority_score = priority_score
             user.updated_at = datetime.utcnow()
 
-            await session.commit()
+            user_snapshot = {
+                "tg_id": user.tg_id,
+                "username": user.username,
+                "first_name": user.first_name,
+                "goal": user.goal,
+                "calories": user.calories,
+                "priority": user.priority,
+                "priority_score": user.priority_score,
+                "funnel_status": user.funnel_status,
+            }
 
-        return user
+            should_check_hot_lead = status.startswith("hotlead_")
+
+            await session.commit()
+            updated_user = user
+
+        else:
+            logger.debug("User with tg_id %s not found for status update", tg_id)
+
+    if should_check_hot_lead and user_snapshot:
+        if await was_hot_lead_notified(tg_id):
+            logger.debug("Hot lead notification already sent for user %s; skipping", tg_id)
+        else:
+            notification_sent = await notify_new_hot_lead(user_snapshot)
+            if notification_sent:
+                await mark_hot_lead_notified(tg_id)
+
+    return updated_user
 
 
 async def get_calculated_users_for_timer() -> list[User]:
@@ -232,3 +261,27 @@ async def count_started_leads(since: datetime | None = None) -> int:
 
         result = await session.scalar(query)
         return int(result or 0)
+
+
+async def was_hot_lead_notified(tg_id: int) -> bool:
+    """Проверить, было ли отправлено уведомление о горячем лиде."""
+
+    async with async_session() as session:
+        notified_at = await session.scalar(
+            select(User.hot_lead_notified_at).where(User.tg_id == tg_id)
+        )
+        return notified_at is not None
+
+
+async def mark_hot_lead_notified(tg_id: int) -> None:
+    """Отметить, что уведомление о горячем лиде отправлено."""
+
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+
+        if not user:
+            logger.debug("Cannot mark hot lead notification for missing user %s", tg_id)
+            return
+
+        user.hot_lead_notified_at = datetime.utcnow()
+        await session.commit()

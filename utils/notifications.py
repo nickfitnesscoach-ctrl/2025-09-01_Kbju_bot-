@@ -10,7 +10,7 @@ from typing import Any, Mapping, Optional, Tuple
 import aiohttp
 from aiohttp import ClientError, ClientTimeout
 
-from config import ADMIN_CHAT_ID, TELEGRAM_BOT_TOKEN
+from config import ADMIN_CHAT_ID, ENABLE_HOT_LEAD_ALERTS, TELEGRAM_BOT_TOKEN
 
 
 TELEGRAM_API_URL = "https://api.telegram.org"
@@ -156,6 +156,25 @@ async def send_telegram_message(
         logger.error("Error sending Telegram notification: %s", exc)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error while sending Telegram notification: %s", exc)
+
+
+async def notify_new_hot_lead(user: Mapping[str, Any] | Any) -> bool:
+    """Отправить уведомление о новом горячем лиде с заголовком и карточкой."""
+
+    tg_id = _value_from_user(user, "tg_id")
+
+    if not ENABLE_HOT_LEAD_ALERTS:
+        logger.debug("Hot lead alerts disabled; skipping notification for user %s", tg_id)
+        return False
+
+    try:
+        logger.info("Sending hot lead alert for user %s", tg_id)
+        await send_telegram_message("<b>Поздравляю! У вас новый горячий лид 🔥</b>", parse_mode="HTML")
+        await notify_lead_card(user)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to send hot lead alert for user %s: %s", tg_id, exc)
+        return False
 
 
 async def notify_lead_card(user: Mapping[str, Any] | Any) -> None:
