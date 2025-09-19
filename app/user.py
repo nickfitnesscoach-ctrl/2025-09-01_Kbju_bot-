@@ -14,7 +14,12 @@ from functools import wraps
 from typing import Any
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+)
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, URLInputFile
@@ -46,9 +51,10 @@ from app.keyboards import (
 from app.states import KBJUStates
 from app.texts import get_text, get_button_text, get_media_id
 from app.webhook import TimerService, WebhookService
+from utils.notifications import CONTACT_REQUEST_MESSAGE, notify_new_lead
+from config import CHANNEL_URL, ADMIN_CHAT_ID
 from utils.notifications import notify_new_lead
 from config import CHANNEL_URL
-
 
 logger = logging.getLogger(__name__)
 user = Router()
@@ -173,11 +179,40 @@ async def calculate_and_save_kbju(user_id: int, user_data: dict) -> dict:
         calculated_at=datetime.utcnow(),
         priority_score=PRIORITY_SCORES["new"],
     )
+
+    # Уведомляем админа карточкой с актуальными данными (не блокируем UI)
+    lead_payload = {
+        "tg_id": user_id,
+        "username": user_data.get("username"),
+        "first_name": user_data.get("first_name"),
+        "goal": user_data.get("goal"),
+        "calories": kbju.get("calories"),
+    }
+    asyncio.create_task(notify_new_lead(lead_payload))
+
     # Уведомляем админа (не блокируем UI — запускаем как задачу)
     name = user_data.get("first_name") or user_data.get("username") or str(user_id)
     contact = user_data.get("username") and f"@{user_data['username']}" or "—"
     asyncio.create_task(notify_new_lead(name=name, contact=contact))
+
     return kbju
+
+
+@user.message(F.reply_to_message, F.reply_to_message.text == CONTACT_REQUEST_MESSAGE)
+async def forward_lead_contact_response(message: Message) -> None:
+    """Переслать ответ лида админу после служебного сообщения."""
+    if not message.from_user:
+        return
+
+    lead_id = message.from_user.id
+    logger.info("Forwarding contact reply from lead %s to admin", lead_id)
+
+    try:
+        await message.forward(chat_id=ADMIN_CHAT_ID)
+    except (TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError) as exc:
+        logger.error("Failed to forward contact reply from %s: %s", lead_id, exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error while forwarding contact reply from %s: %s", lead_id, exc)
 
 
 async def show_kbju_results(callback: CallbackQuery, kbju: dict, goal: str):

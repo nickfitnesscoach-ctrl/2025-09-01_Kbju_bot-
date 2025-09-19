@@ -36,9 +36,18 @@ async def set_user(tg_id, username=None, first_name=None):
         await session.commit()
 
     if new_lead_created:
+        lead_payload = {
+            "tg_id": tg_id,
+            "username": username,
+            "first_name": first_name,
+        }
+        try:
+            await notify_new_lead(lead_payload)
+            
         contact = f"@{username}" if username else f"tg_id: {tg_id}"
         try:
             await notify_new_lead(first_name or "Не указано", contact)
+            
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to send new lead notification: %s", exc)
 
