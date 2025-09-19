@@ -44,7 +44,7 @@ from app.keyboards import (
     back_to_menu,
 )
 from app.states import KBJUStates
-from app.texts import get_text, get_button_text
+from app.texts import get_text, get_button_text, get_media_id
 from app.webhook import TimerService, WebhookService
 from utils.notifications import notify_new_lead
 from config import CHANNEL_URL
@@ -244,11 +244,25 @@ def cancel_delayed_offer(user_id: int) -> None:
 
 async def send_welcome_sequence(message: Message):
     """Приветствие: фото → текст + главное меню."""
+    photo_sent = False
+    file_id = get_media_id("coach_photo_file_id")
+    if file_id:
+        logger.debug("Sending welcome photo via file_id")
+        try:
+            await message.answer_photo(file_id)
+            photo_sent = True
+        except Exception as e:
+            logger.warning("Welcome photo via file_id failed: %s", e)
+    else:
+        logger.debug("No cached file_id for welcome photo")
+
     try:
-        photo_url = get_text("coach_photo_url")
-        await message.answer_photo(URLInputFile(photo_url))
+        if not photo_sent:
+            photo_url = get_text("coach_photo_url")
+            logger.debug("Sending welcome photo via URL")
+            await message.answer_photo(URLInputFile(photo_url))
     except Exception as e:
-        logger.warning("Welcome photo failed: %s", e)
+        logger.warning("Welcome photo via URL failed: %s", e)
 
     try:
         await message.answer(get_text("welcome"), reply_markup=main_menu(), parse_mode="HTML")
