@@ -1,16 +1,23 @@
 from datetime import datetime
+import logging
 
 from sqlalchemy import desc, select
 
 from app.database.models import User, async_session
+from utils.notifications import notify_new_lead
+
+
+logger = logging.getLogger(__name__)
 
 
 async def set_user(tg_id, username=None, first_name=None):
     """Создать или обновить пользователя"""
+    new_lead_created = False
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        
+
         if not user:
+            new_lead_created = True
             session.add(User(
                 tg_id=tg_id,
                 username=username,
@@ -25,8 +32,15 @@ async def set_user(tg_id, username=None, first_name=None):
             if first_name and user.first_name != first_name:
                 user.first_name = first_name
             user.updated_at = datetime.utcnow()
-            
+
         await session.commit()
+
+    if new_lead_created:
+        contact = f"@{username}" if username else f"tg_id: {tg_id}"
+        try:
+            await notify_new_lead(first_name or "Не указано", contact)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to send new lead notification: %s", exc)
 
 
 async def get_user(tg_id):
