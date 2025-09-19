@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from typing import Any
 
@@ -20,9 +20,15 @@ from aiogram.exceptions import (
     TelegramNetworkError,
     TelegramRetryAfter,
 )
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, URLInputFile
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    URLInputFile,
+)
 
 from app.calculator import KBJUCalculator, get_activity_description  # activity пока из helper
 from app.constants import (
@@ -36,7 +42,14 @@ from app.constants import (
     DB_OPERATION_TIMEOUT,
     FUNNEL_STATUSES,
 )
-from app.database.requests import get_user, set_user, update_user_data, update_user_status
+from app.database.requests import (
+    count_started_leads,
+    get_started_leads,
+    get_user,
+    set_user,
+    update_user_data,
+    update_user_status,
+)
 from app.keyboards import (
     main_menu,
     gender_keyboard,
@@ -53,10 +66,23 @@ from app.texts import get_text, get_button_text, get_media_id
 from app.webhook import TimerService, WebhookService
 from app.contact_requests import contact_request_registry
 from config import CHANNEL_URL, ADMIN_CHAT_ID
-from utils.notifications import CONTACT_REQUEST_MESSAGE, notify_lead_card
+from utils.notifications import CONTACT_REQUEST_MESSAGE, build_lead_card, notify_lead_card
 
 logger = logging.getLogger(__name__)
 user = Router()
+
+LEADS_PAGE_SIZE = 10
+DEFAULT_LEADS_WINDOW = "all"
+_LEADS_WINDOW_DELTAS: dict[str, timedelta | None] = {
+    "all": None,
+    "today": timedelta(days=1),
+    "7d": timedelta(days=7),
+}
+_LEADS_WINDOW_LABELS: dict[str, str] = {
+    "all": "все",
+    "today": "за 24 часа",
+    "7d": "за 7 дней",
+}
 
 # ---------------------------
 # Rate limiting (в памяти процесса)
@@ -390,9 +416,274 @@ def _user_to_dict(user) -> dict:
     }
 
 
+def _is_admin(user_id: int | None) -> bool:
+    """Проверить, является ли пользователь администратором."""
+
+    if user_id is None or ADMIN_CHAT_ID is None:
+        return False
+    return user_id == ADMIN_CHAT_ID
+
+
+def _normalize_leads_window(window: str | None) -> str:
+    if not window:
+        return DEFAULT_LEADS_WINDOW
+    window_key = window.lower()
+    if window_key not in _LEADS_WINDOW_DELTAS:
+        return DEFAULT_LEADS_WINDOW
+    return window_key
+
+
+def _parse_leads_command_args(args: str | None) -> tuple[int, str]:
+    """Разобрать параметры команды /all_leads."""
+
+    page = 1
+    window = DEFAULT_LEADS_WINDOW
+    if not args:
+        return page, window
+
+    for token in args.split():
+        token = token.strip()
+        if not token:
+            continue
+
+        token_lower = token.lower()
+        if token_lower in _LEADS_WINDOW_DELTAS:
+            window = token_lower
+            continue
+
+        try:
+            page_value = int(token)
+        except ValueError:
+            continue
+
+        if page_value > 0:
+            page = page_value
+
+    return page, window
+
+
+def _get_since_for_window(window: str) -> datetime | None:
+    delta = _LEADS_WINDOW_DELTAS.get(window)
+    if not delta:
+        return None
+    return datetime.utcnow() - delta
+
+
+async def _load_leads_page(
+    page: int,
+    window: str,
+) -> tuple[list[Any], int, int, int, str]:
+    """Загрузить страницу лидов и вернуть данные для отображения."""
+
+    window_key = _normalize_leads_window(window)
+    since = _get_since_for_window(window_key)
+
+    count_raw = await safe_db_operation(count_started_leads, since=since)
+    if count_raw is False or count_raw is None:
+        raise RuntimeError("Failed to count started leads")
+
+    total_count = int(count_raw)
+    if total_count <= 0:
+        return [], 0, 0, 1, window_key
+
+    total_pages = (total_count + LEADS_PAGE_SIZE - 1) // LEADS_PAGE_SIZE
+    current_page = page if page > 0 else 1
+    if current_page > total_pages:
+        current_page = total_pages
+
+    offset = (current_page - 1) * LEADS_PAGE_SIZE
+
+    leads_raw = await safe_db_operation(
+        get_started_leads,
+        offset=offset,
+        limit=LEADS_PAGE_SIZE,
+        since=since,
+    )
+
+    if leads_raw is False or leads_raw is None:
+        raise RuntimeError("Failed to load started leads")
+
+    leads_list = list(leads_raw)
+
+    return leads_list, total_count, total_pages, current_page, window_key
+
+
+def _build_leads_pager_markup(page: int, total_pages: int, window: str) -> InlineKeyboardMarkup:
+    buttons: list[list[InlineKeyboardButton]] = []
+    nav_row: list[InlineKeyboardButton] = []
+
+    if page > 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data=f"leads_page:{page - 1}:{window}",
+            )
+        )
+
+    if total_pages and page < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="▶️ Далее",
+                callback_data=f"leads_page:{page + 1}:{window}",
+            )
+        )
+
+    if nav_row:
+        buttons.append(nav_row)
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text="🔄 Обновить",
+                callback_data=f"leads_page:{page}:{window}",
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _format_leads_pager_text(page: int, total_pages: int, total_count: int, window: str) -> str:
+    label = _LEADS_WINDOW_LABELS.get(window, _LEADS_WINDOW_LABELS[DEFAULT_LEADS_WINDOW])
+    return (
+        f"Лиды: страница {page} из {total_pages}"
+        f" • Всего: {total_count}"
+        f" • Фильтр: {label}"
+    )
+
+
+async def _send_lead_cards(message: Message, leads: list[Any]) -> None:
+    if not message:
+        return
+
+    for lead in leads:
+        payload = {
+            "tg_id": getattr(lead, "tg_id", None),
+            "username": getattr(lead, "username", None),
+            "first_name": getattr(lead, "first_name", None),
+            "goal": getattr(lead, "goal", None),
+            "calories": getattr(lead, "calories", None),
+        }
+
+        try:
+            text, markup = build_lead_card(payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to build lead card for %s: %s", payload.get("tg_id"), exc)
+            continue
+
+        try:
+            await message.answer(text, parse_mode="HTML", reply_markup=markup)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to send lead card for %s: %s", payload.get("tg_id"), exc)
+            continue
+
+        await asyncio.sleep(0.05)
+
+
 # ---------------------------
 # Хэндлеры
 # ---------------------------
+
+@user.message(Command("all_leads"))
+@rate_limit
+@error_handler
+async def cmd_all_leads(message: Message, command: CommandObject) -> None:
+    """Отобразить список лидов для администратора."""
+
+    if not message.from_user:
+        return
+
+    if not _is_admin(message.from_user.id):
+        await message.answer("Недостаточно прав.")
+        return
+
+    args = command.args if command else None
+    page, window = _parse_leads_command_args(args)
+
+    try:
+        leads, total_count, total_pages, current_page, window_key = await _load_leads_page(page, window)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to load leads list: %s", exc)
+        await message.answer("Не удалось загрузить список.")
+        return
+
+    if total_count <= 0 or not leads:
+        await message.answer("Список пуст.")
+        return
+
+    await _send_lead_cards(message, leads)
+
+    pager_text = _format_leads_pager_text(current_page, total_pages, total_count, window_key)
+    pager_markup = _build_leads_pager_markup(current_page, total_pages, window_key)
+
+    try:
+        await message.answer(pager_text, reply_markup=pager_markup)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to send leads pager: %s", exc)
+
+
+@user.callback_query(F.data.startswith("leads_page:"))
+@rate_limit
+@error_handler
+async def paginate_leads(callback: CallbackQuery) -> None:
+    """Навигация по страницам лидов."""
+
+    if not callback.from_user:
+        return
+
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    data = callback.data or ""
+    parts = data.split(":", 2)
+    if len(parts) != 3:
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    try:
+        requested_page = int(parts[1])
+    except ValueError:
+        requested_page = 1
+
+    window = parts[2]
+
+    try:
+        leads, total_count, total_pages, current_page, window_key = await _load_leads_page(requested_page, window)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to paginate leads: %s", exc)
+        if callback.message:
+            try:
+                await callback.message.edit_text("Не удалось загрузить список.", reply_markup=None)
+            except Exception as edit_exc:  # noqa: BLE001
+                logger.warning("Failed to update pager message after error: %s", edit_exc)
+        await callback.answer("Ошибка загрузки", show_alert=True)
+        return
+
+    if total_count <= 0 or not leads:
+        if callback.message:
+            try:
+                await callback.message.edit_text("Список пуст.", reply_markup=None)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to update pager message for empty list: %s", exc)
+        await callback.answer()
+        return
+
+    if callback.message:
+        try:
+            await callback.message.edit_text(
+                _format_leads_pager_text(current_page, total_pages, total_count, window_key),
+                reply_markup=_build_leads_pager_markup(current_page, total_pages, window_key),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to edit leads pager message: %s", exc)
+
+        await _send_lead_cards(callback.message, leads)
+    else:
+        logger.warning("Callback without message for leads pagination")
+
+    await callback.answer()
+
 
 @user.message(CommandStart())
 @rate_limit
