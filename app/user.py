@@ -51,12 +51,9 @@ from app.keyboards import (
 from app.states import KBJUStates
 from app.texts import get_text, get_button_text, get_media_id
 from app.webhook import TimerService, WebhookService
+from app.contact_requests import contact_request_registry
 from config import CHANNEL_URL, ADMIN_CHAT_ID
-from utils.notifications import (
-    CONTACT_REQUEST_MESSAGE,
-    notify_lead_card,
-    notify_lead_summary,
-)
+from utils.notifications import CONTACT_REQUEST_MESSAGE, notify_lead_card
 
 logger = logging.getLogger(__name__)
 user = Router()
@@ -192,15 +189,24 @@ async def calculate_and_save_kbju(user_id: int, user_data: dict) -> dict:
     }
     asyncio.create_task(notify_lead_card(lead_payload))
 
-    # Уведомляем админа (не блокируем UI — запускаем как задачу)
-    name = user_data.get("first_name") or user_data.get("username") or str(user_id)
-    contact = user_data.get("username") and f"@{user_data['username']}" or "—"
-    asyncio.create_task(notify_lead_summary(name=name, contact=contact))
-
     return kbju
 
 
-@user.message(F.reply_to_message, F.reply_to_message.text == CONTACT_REQUEST_MESSAGE)
+async def _is_contact_response(message: Message) -> bool:
+    """Проверить, является ли сообщение ответом лида на запрос связаться."""
+    if not message.from_user:
+        return False
+
+    if message.chat.type != "private":
+        return False
+
+    if message.reply_to_message and message.reply_to_message.text == CONTACT_REQUEST_MESSAGE:
+        return True
+
+    return await contact_request_registry.is_pending(message.from_user.id)
+
+
+@user.message(_is_contact_response)
 async def forward_lead_contact_response(message: Message) -> None:
     """Переслать ответ лида админу после служебного сообщения."""
     if not message.from_user:
@@ -211,14 +217,39 @@ async def forward_lead_contact_response(message: Message) -> None:
 
     if ADMIN_CHAT_ID is None:
         logger.warning("Cannot forward contact reply because ADMIN_CHAT_ID is not configured")
+        await _notify_lead_about_failure(message)
         return
 
     try:
         await message.forward(chat_id=ADMIN_CHAT_ID)
     except (TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError) as exc:
         logger.error("Failed to forward contact reply from %s: %s", lead_id, exc)
+        await _notify_lead_about_failure(message)
+        return
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error while forwarding contact reply from %s: %s", lead_id, exc)
+        await _notify_lead_about_failure(message)
+        return
+
+    await contact_request_registry.remove(lead_id)
+
+    try:
+        await message.answer("Ваше сообщение отправлено администратору.")
+    except (TelegramBadRequest, TelegramNetworkError) as exc:
+        logger.warning("Failed to confirm contact reply to lead %s: %s", lead_id, exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error while confirming contact reply to %s: %s", lead_id, exc)
+
+
+async def _notify_lead_about_failure(message: Message) -> None:
+    """Сообщить пользователю о том, что сообщение не дошло до администратора."""
+
+    try:
+        await message.answer("Не удалось отправить сообщение админу, попробуйте позже.")
+    except (TelegramBadRequest, TelegramNetworkError) as exc:
+        logger.warning("Failed to notify lead about failed contact delivery: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error while notifying lead about failed contact delivery: %s", exc)
 
 
 async def show_kbju_results(callback: CallbackQuery, kbju: dict, goal: str):
