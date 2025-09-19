@@ -68,6 +68,9 @@ CHANNEL_URL = os.getenv("CHANNEL_URL", "")
 # Режим отладки
 DEBUG = _bool(os.getenv("DEBUG", "false"))
 
+# Напоминание пользователям, которые не завершили расчёт
+STALLED_REMINDER_DELAY_MIN = int(os.getenv("STALLED_REMINDER_DELAY_MIN", "120"))
+
 _missing_required: list[str] = []
 if not TELEGRAM_BOT_TOKEN:
     _missing_required.append("TELEGRAM_BOT_TOKEN")
