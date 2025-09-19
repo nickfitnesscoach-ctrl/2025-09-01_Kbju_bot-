@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from app.database.models import User, async_session
 from utils.notifications import notify_lead_card
@@ -134,3 +134,41 @@ async def get_hot_leads() -> list[User]:
             )
         )
         return users.all()
+
+
+async def get_started_leads(
+    offset: int = 0,
+    limit: int = 20,
+    since: datetime | None = None,
+) -> list[User]:
+    """Получить пользователей, начавших воронку (/start)."""
+
+    async with async_session() as session:
+        query = select(User).where(User.created_at.isnot(None))
+
+        if since is not None:
+            query = query.where(User.created_at >= since)
+
+        query = query.order_by(desc(User.created_at))
+
+        if offset:
+            query = query.offset(max(offset, 0))
+
+        if limit:
+            query = query.limit(limit)
+
+        users = await session.scalars(query)
+        return users.all()
+
+
+async def count_started_leads(since: datetime | None = None) -> int:
+    """Подсчитать количество пользователей, начавших воронку."""
+
+    async with async_session() as session:
+        query = select(func.count()).select_from(User).where(User.created_at.isnot(None))
+
+        if since is not None:
+            query = query.where(User.created_at >= since)
+
+        result = await session.scalar(query)
+        return int(result or 0)
