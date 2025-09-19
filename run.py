@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from app.admin import admin
 from app.database.models import async_main
 from app.user import user
-from config import DEBUG, N8N_WEBHOOK_URL, TOKEN
+from config import DEBUG, N8N_WEBHOOK_URL, TOKEN, validate_required_settings
 
 
 async def main():
@@ -23,6 +23,12 @@ async def main():
         logging.basicConfig(level=logging.WARNING)
         print("[PROD] Fitness Bot starting in production mode")
     
+    try:
+        validate_required_settings()
+    except RuntimeError as err:
+        logging.critical("%s", err)
+        raise SystemExit(1) from err
+
     # Создание бота с HTML разметкой по умолчанию
     bot = Bot(
         token=TOKEN,

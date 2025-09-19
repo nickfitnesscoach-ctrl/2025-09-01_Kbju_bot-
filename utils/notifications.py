@@ -1,14 +1,17 @@
+"""Уведомления и вспомогательные функции для взаимодействия с Telegram API."""
+
+from __future__ import annotations
+
 import asyncio
 import html
 import logging
 from typing import Any, Mapping, Optional, Tuple
-import logging
-from typing import Optional
 
 import aiohttp
 from aiohttp import ClientError, ClientTimeout
 
 from config import ADMIN_CHAT_ID, TELEGRAM_BOT_TOKEN
+
 
 TELEGRAM_API_URL = "https://api.telegram.org"
 CONTACT_REQUEST_MESSAGE = "Админ хочет с вами связаться, ответьте на это сообщение"
@@ -24,6 +27,7 @@ _GOAL_LABELS: Mapping[str, str] = {
 
 def _value_from_user(user: Mapping[str, Any] | Any, key: str) -> Any:
     """Возвращает значение атрибута/ключа из произвольного объекта пользователя."""
+
     if isinstance(user, Mapping):
         return user.get(key)
     return getattr(user, key, None)
@@ -53,6 +57,7 @@ def _format_calories(calories: Any) -> str:
 
 def build_lead_card(user: Mapping[str, Any] | Any) -> Tuple[str, dict]:
     """Сформировать текст и клавиатуру карточки лида для уведомления админу."""
+
     tg_id = _value_from_user(user, "tg_id")
     if tg_id is None:
         raise ValueError("tg_id is required to build lead card")
@@ -70,10 +75,7 @@ def build_lead_card(user: Mapping[str, Any] | Any) -> Tuple[str, dict]:
     display_name = first_name or username_raw or f"ID {tg_id_int}"
     safe_name = html.escape(str(display_name))
 
-    username_line = (
-        f"💬 @{html.escape(username_raw)}\n" if username_raw else ""
-    )
-
+    username_line = f"💬 @{html.escape(username_raw)}\n" if username_raw else ""
     mention_link = f'<a href="tg://user?id={tg_id_int}">Открыть профиль</a>'
 
     text = (
@@ -107,18 +109,18 @@ def build_lead_card(user: Mapping[str, Any] | Any) -> Tuple[str, dict]:
 async def send_telegram_message(
     message: str,
     *,
-    chat_id: int = ADMIN_CHAT_ID,
+    chat_id: Optional[int] = ADMIN_CHAT_ID,
     parse_mode: Optional[str] = None,
     reply_markup: Optional[dict] = None,
 ) -> None:
-
-logger = logging.getLogger(__name__)
-
-
-async def send_telegram_message(message: str, chat_id: int = ADMIN_CHAT_ID) -> None:
     """Отправить сообщение через Telegram Bot API."""
+
     if not TELEGRAM_BOT_TOKEN:
         logger.warning("TELEGRAM_BOT_TOKEN is not set; skipping Telegram notification")
+        return
+
+    if chat_id is None:
+        logger.warning("Cannot send Telegram notification because ADMIN_CHAT_ID is not configured")
         return
 
     url = f"{TELEGRAM_API_URL}/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -131,7 +133,6 @@ async def send_telegram_message(message: str, chat_id: int = ADMIN_CHAT_ID) -> N
         payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    payload = {"chat_id": chat_id, "text": message}
 
     try:
         timeout = ClientTimeout(total=10)
@@ -153,8 +154,10 @@ async def send_telegram_message(message: str, chat_id: int = ADMIN_CHAT_ID) -> N
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error while sending Telegram notification: %s", exc)
 
-async def notify_new_lead(user: Mapping[str, Any] | Any) -> None:
+
+async def notify_lead_card(user: Mapping[str, Any] | Any) -> None:
     """Собрать карточку лида и отправить админу."""
+
     try:
         text, markup = build_lead_card(user)
     except Exception as exc:  # noqa: BLE001
@@ -162,15 +165,18 @@ async def notify_new_lead(user: Mapping[str, Any] | Any) -> None:
         return
 
     await send_telegram_message(text, parse_mode="HTML", reply_markup=markup)
-    
+
+
 def format_lead_message(name: str, contact: str) -> str:
     """Сформировать текст уведомления о новом лиде."""
+
     safe_name = name or "Не указано"
     safe_contact = contact or "контакт не указан"
     return f"Новый лид: {safe_name}, {safe_contact}"
 
 
-async def notify_new_lead(name: str, contact: str) -> None:
-    """Отправить админу уведомление о новом лиде."""
+async def notify_lead_summary(name: str, contact: str) -> None:
+    """Отправить админу короткое уведомление о новом лиде."""
+
     message = format_lead_message(name, contact)
     await send_telegram_message(message)
