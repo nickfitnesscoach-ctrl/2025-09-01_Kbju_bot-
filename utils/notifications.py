@@ -2,6 +2,8 @@ import asyncio
 import html
 import logging
 from typing import Any, Mapping, Optional, Tuple
+import logging
+from typing import Optional
 
 import aiohttp
 from aiohttp import ClientError, ClientTimeout
@@ -109,6 +111,11 @@ async def send_telegram_message(
     parse_mode: Optional[str] = None,
     reply_markup: Optional[dict] = None,
 ) -> None:
+
+logger = logging.getLogger(__name__)
+
+
+async def send_telegram_message(message: str, chat_id: int = ADMIN_CHAT_ID) -> None:
     """Отправить сообщение через Telegram Bot API."""
     if not TELEGRAM_BOT_TOKEN:
         logger.warning("TELEGRAM_BOT_TOKEN is not set; skipping Telegram notification")
@@ -124,6 +131,7 @@ async def send_telegram_message(
         payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
+    payload = {"chat_id": chat_id, "text": message}
 
     try:
         timeout = ClientTimeout(total=10)
@@ -145,7 +153,6 @@ async def send_telegram_message(
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error while sending Telegram notification: %s", exc)
 
-
 async def notify_new_lead(user: Mapping[str, Any] | Any) -> None:
     """Собрать карточку лида и отправить админу."""
     try:
@@ -155,3 +162,15 @@ async def notify_new_lead(user: Mapping[str, Any] | Any) -> None:
         return
 
     await send_telegram_message(text, parse_mode="HTML", reply_markup=markup)
+    
+def format_lead_message(name: str, contact: str) -> str:
+    """Сформировать текст уведомления о новом лиде."""
+    safe_name = name or "Не указано"
+    safe_contact = contact or "контакт не указан"
+    return f"Новый лид: {safe_name}, {safe_contact}"
+
+
+async def notify_new_lead(name: str, contact: str) -> None:
+    """Отправить админу уведомление о новом лиде."""
+    message = format_lead_message(name, contact)
+    await send_telegram_message(message)

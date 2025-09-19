@@ -16,7 +16,15 @@ import os
 from typing import Any, Dict, Optional
 
 # Публичный API модуля (удобно для IDE/линтеров)
-__all__ = ["get_text", "get_button_text", "save_texts", "load_texts", "TEXTS"]
+__all__ = [
+    "get_text",
+    "get_button_text",
+    "save_texts",
+    "load_texts",
+    "get_media_id",
+    "set_media_id",
+    "TEXTS",
+]
 
 # Глобальное хранилище текстов в памяти (заполняется из JSON)
 TEXTS: Dict[str, Any] = {}
@@ -97,7 +105,7 @@ def load_texts(force: bool = False) -> None:
         logger.exception("Failed to load texts from %s", path)
 
 
-def save_texts() -> None:
+def save_texts() -> bool:
     """
     Сохраняет текущее содержимое TEXTS обратно в JSON.
     Обычно вызывает админка после правок.
@@ -112,8 +120,10 @@ def save_texts() -> None:
             _LAST_MTIME = os.path.getmtime(path)
         except OSError:
             pass
+        return True
     except Exception:
         logger.exception("Failed to save texts to %s", path)
+        return False
 
 
 # ---------------------------
@@ -156,3 +166,44 @@ def get_button_text(key: str) -> str:
 
 # Первичная загрузка при импорте модуля
 load_texts()
+
+
+def _resolve_optional(key: str, data: Dict[str, Any]) -> Any | None:
+    """Вернуть значение по ключу вида 'a.b.c', либо None, если его нет."""
+    node: Any = data
+    for part in key.split("."):
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            return None
+    return node
+
+
+def get_media_id(key: str) -> Optional[str]:
+    """Получить сохранённый file_id медиа по ключу (или None)."""
+    load_texts()
+    value = _resolve_optional(key, TEXTS)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def set_media_id(key: str, value: Optional[str]) -> None:
+    """Сохранить/удалить file_id медиа в JSON."""
+    load_texts()
+
+    target: Dict[str, Any] = TEXTS
+    parts = key.split(".")
+    for part in parts[:-1]:
+        if not isinstance(target.get(part), dict):
+            target[part] = {}
+        target = target[part]  # type: ignore[assignment]
+
+    if value is None or not str(value).strip():
+        target.pop(parts[-1], None)
+    else:
+        target[parts[-1]] = str(value)
+
+    if not save_texts():
+        raise RuntimeError(f"Failed to persist media id for key {key}")

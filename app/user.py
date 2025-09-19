@@ -49,11 +49,12 @@ from app.keyboards import (
     back_to_menu,
 )
 from app.states import KBJUStates
-from app.texts import get_text, get_button_text
+from app.texts import get_text, get_button_text, get_media_id
 from app.webhook import TimerService, WebhookService
 from utils.notifications import CONTACT_REQUEST_MESSAGE, notify_new_lead
 from config import CHANNEL_URL, ADMIN_CHAT_ID
-
+from utils.notifications import notify_new_lead
+from config import CHANNEL_URL
 
 logger = logging.getLogger(__name__)
 user = Router()
@@ -178,6 +179,7 @@ async def calculate_and_save_kbju(user_id: int, user_data: dict) -> dict:
         calculated_at=datetime.utcnow(),
         priority_score=PRIORITY_SCORES["new"],
     )
+
     # Уведомляем админа карточкой с актуальными данными (не блокируем UI)
     lead_payload = {
         "tg_id": user_id,
@@ -187,6 +189,12 @@ async def calculate_and_save_kbju(user_id: int, user_data: dict) -> dict:
         "calories": kbju.get("calories"),
     }
     asyncio.create_task(notify_new_lead(lead_payload))
+
+    # Уведомляем админа (не блокируем UI — запускаем как задачу)
+    name = user_data.get("first_name") or user_data.get("username") or str(user_id)
+    contact = user_data.get("username") and f"@{user_data['username']}" or "—"
+    asyncio.create_task(notify_new_lead(name=name, contact=contact))
+
     return kbju
 
 
@@ -271,11 +279,25 @@ def cancel_delayed_offer(user_id: int) -> None:
 
 async def send_welcome_sequence(message: Message):
     """Приветствие: фото → текст + главное меню."""
+    photo_sent = False
+    file_id = get_media_id("coach_photo_file_id")
+    if file_id:
+        logger.debug("Sending welcome photo via file_id")
+        try:
+            await message.answer_photo(file_id)
+            photo_sent = True
+        except Exception as e:
+            logger.warning("Welcome photo via file_id failed: %s", e)
+    else:
+        logger.debug("No cached file_id for welcome photo")
+
     try:
-        photo_url = get_text("coach_photo_url")
-        await message.answer_photo(URLInputFile(photo_url))
+        if not photo_sent:
+            photo_url = get_text("coach_photo_url")
+            logger.debug("Sending welcome photo via URL")
+            await message.answer_photo(URLInputFile(photo_url))
     except Exception as e:
-        logger.warning("Welcome photo failed: %s", e)
+        logger.warning("Welcome photo via URL failed: %s", e)
 
     try:
         await message.answer(get_text("welcome"), reply_markup=main_menu(), parse_mode="HTML")
