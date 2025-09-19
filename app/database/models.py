@@ -1,15 +1,20 @@
 from datetime import datetime
+import logging
 
-from sqlalchemy import BigInteger, DateTime, Float, Integer, String
+from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, String, inspect
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.schema import AddColumn
+from sqlalchemy.exc import SQLAlchemyError
 
 from config import DB_URL, DEBUG
 
 engine = create_async_engine(url=DB_URL,
                              echo=DEBUG)
-    
+
 async_session = async_sessionmaker(engine)
+
+logger = logging.getLogger(__name__)
 
 
 class Base(AsyncAttrs, DeclarativeBase):
@@ -54,3 +59,31 @@ class User(Base):
 async def async_main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_hot_lead_notified_column)
+
+
+def _ensure_hot_lead_notified_column(sync_conn) -> None:
+    """Create the hot_lead_notified_at column if it is missing."""
+
+    inspector = inspect(sync_conn)
+    columns = {column["name"] for column in inspector.get_columns(User.__tablename__)}
+
+    if "hot_lead_notified_at" in columns:
+        logger.debug("users.hot_lead_notified_at already exists")
+        return
+
+    logger.info("Adding users.hot_lead_notified_at column for hot lead notifications")
+    ddl = AddColumn(
+        User.__table__,
+        Column("hot_lead_notified_at", DateTime, nullable=True),
+    )
+
+    try:
+        sync_conn.execute(ddl)
+    except SQLAlchemyError as exc:  # pragma: no cover - defensive logging
+        logger.exception("Failed to add users.hot_lead_notified_at column: %s", exc)
+        refreshed_columns = {
+            column["name"] for column in inspector.get_columns(User.__tablename__)
+        }
+        if "hot_lead_notified_at" not in refreshed_columns:
+            raise
