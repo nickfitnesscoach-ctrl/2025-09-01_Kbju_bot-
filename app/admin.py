@@ -1,6 +1,7 @@
 # app/admin.py
 from __future__ import annotations
 
+import logging
 from typing import Optional, List
 
 from aiogram import Router, F
@@ -15,14 +16,38 @@ from aiogram.types import (
 
 from app.database.requests import get_hot_leads
 from app.states import AdminStates
-from app.texts import get_text, get_button_text
+from app.texts import get_text, get_button_text, set_media_id
 from app.calculator import get_goal_description, get_activity_description
+from config import ADMIN_CHAT_ID
 
 
 # ----------------------------
 # Router
 # ----------------------------
 admin = Router()
+
+logger = logging.getLogger(__name__)
+
+_missing_admin_id_logged = False
+
+
+def _is_authorized_admin(message: Message) -> bool:
+    """Проверка, что сообщение пришло из приватного чата с админом."""
+    global _missing_admin_id_logged
+
+    if ADMIN_CHAT_ID is None:
+        if not _missing_admin_id_logged:
+            logger.warning("ADMIN_CHAT_ID is not configured; admin media handlers disabled")
+            _missing_admin_id_logged = True
+        return False
+
+    if not message.from_user or message.from_user.id != ADMIN_CHAT_ID:
+        return False
+
+    if message.chat.type != "private" or message.chat.id != ADMIN_CHAT_ID:
+        return False
+
+    return True
 
 
 # ----------------------------
@@ -32,11 +57,16 @@ class Admin(Filter):
     """Простой фильтр доступа по списку ID."""
 
     def __init__(self, admin_ids: Optional[List[int]] = None):
-        # Задай свой ID здесь или передавай извне.
-        self.admins = admin_ids or [310151740]
+        if admin_ids is not None:
+            self.admins = admin_ids
+        else:
+            self.admins = []
+            if ADMIN_CHAT_ID is not None:
+                self.admins.append(ADMIN_CHAT_ID)
 
     async def __call__(self, message: Message) -> bool:
-        return bool(message.from_user and message.from_user.id in self.admins)
+        user_id = message.from_user.id if message.from_user else None
+        return bool(user_id and user_id in self.admins)
 
 
 # ----------------------------
@@ -117,6 +147,25 @@ def _lead_keyboard(current_idx: int, total_count: int, user_tg_id: int) -> Inlin
 
 
 # ----------------------------
+# Admin menu text
+# ----------------------------
+def _admin_menu_text() -> str:
+    """Текст приветствия с перечнем доступных команд."""
+
+    base = get_text("admin.welcome")
+    commands: list[tuple[str, str]] = [
+        ("/admin", "показать эту подсказку"),
+        ("/leads", "список горячих лидов"),
+        ("/set_coach_photo", "подсказка по обновлению приветственного фото"),
+        ("/photo_id", "показать file_id фото из сообщения-реплая"),
+    ]
+
+    lines = [base, "", "Доступные команды:"]
+    lines.extend(f"{command} — {description}" for command, description in commands)
+    return "\n".join(lines)
+
+
+# ----------------------------
 # Card renderer
 # ----------------------------
 async def _show_lead_card(
@@ -180,7 +229,7 @@ async def _show_lead_card(
 @admin.message(Admin(), Command("admin"))
 async def admin_home(message: Message) -> None:
     """Приветственная надпись админ-панели."""
-    await message.answer(get_text("admin.welcome"), parse_mode="HTML")
+    await message.answer(_admin_menu_text(), parse_mode="HTML")
 
 
 @admin.message(Admin(), Command("leads"))
@@ -221,5 +270,55 @@ async def admin_prev_lead(callback: CallbackQuery, state: FSMContext) -> None:
 async def admin_back(callback: CallbackQuery, state: FSMContext) -> None:
     """Возврат в «админ-меню» (просто текст-приветствие)."""
     await state.clear()
-    await callback.message.edit_text(get_text("admin.welcome"), parse_mode="HTML")
+    await callback.message.edit_text(_admin_menu_text(), parse_mode="HTML")
     await callback.answer()
+
+
+# ----------------------------
+# Media helpers
+# ----------------------------
+
+
+@admin.message(Command("set_coach_photo"))
+async def admin_set_coach_photo(message: Message) -> None:
+    """Подсказка по обновлению приветственного фото."""
+    if not _is_authorized_admin(message):
+        await message.answer("Недостаточно прав")
+        return
+
+    await message.answer("Пришлите фото одним сообщением")
+
+
+@admin.message(Command("photo_id"))
+async def admin_photo_id(message: Message) -> None:
+    """Показать file_id фото из сообщения-реплая."""
+    if not _is_authorized_admin(message):
+        await message.answer("Недостаточно прав")
+        return
+
+    reply = message.reply_to_message
+    if not reply or not reply.photo:
+        await message.answer("Эта команда работает в ответ на сообщение с фото")
+        return
+
+    await message.answer(f"file_id: {reply.photo[-1].file_id}")
+
+
+@admin.message(F.photo)
+async def admin_receive_photo(message: Message) -> None:
+    """Сохранить file_id присланного фото и ответить администратору."""
+    if not _is_authorized_admin(message):
+        await message.answer("Недостаточно прав")
+        return
+
+    largest_photo = message.photo[-1]
+    file_id = largest_photo.file_id
+
+    await message.answer(f"file_id: {file_id}")
+
+    try:
+        set_media_id("coach_photo_file_id", file_id)
+        logger.debug("coach_photo_file_id saved via admin photo message")
+    except Exception as exc:
+        logger.error("Failed to save coach photo file_id: %s", exc)
+        await message.answer("Не удалось сохранить file_id, попробуйте позже.")

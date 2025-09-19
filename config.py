@@ -13,6 +13,20 @@ def _bool(value: str) -> bool:
     """Конвертируем строку в boolean"""
     return str(value).lower() in ("1", "true", "yes", "y", "on")
 
+
+def _int(value: str | None) -> int | None:
+    """Безопасно конвертируем строку в int."""
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        print(f"⚠️ ВНИМАНИЕ: некорректный ADMIN_CHAT_ID: {value}")
+        return None
+
 # Совместимость имён токена
 TOKEN = os.getenv("TOKEN") or os.getenv("BOT_TOKEN", "")
 BOT_TOKEN = TOKEN
@@ -26,6 +40,9 @@ N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "")
 
 # URL канала
 CHANNEL_URL = os.getenv("CHANNEL_URL", "")
+
+# Дополнительные права
+ADMIN_CHAT_ID = _int(os.getenv("ADMIN_CHAT_ID"))
 
 # Режим отладки
 DEBUG = _bool(os.getenv("DEBUG", "false"))
