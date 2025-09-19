@@ -248,13 +248,14 @@ async def _show_lead_card(
 # ----------------------------
 # Handlers
 # ----------------------------
-@admin.message(Admin(), Command("admin"))
+@admin.message(Admin(), Command("admin"), F.chat.type == "private")
 async def admin_home(message: Message) -> None:
     """Приветственная надпись админ-панели."""
+    logger.debug("/admin entered by %s", message.from_user.id if message.from_user else "unknown")
     await message.answer(_admin_menu_text(), parse_mode="HTML")
 
 
-@admin.message(Admin(), Command("leads"))
+@admin.message(Admin(), Command("leads"), F.chat.type == "private")
 async def admin_leads(message: Message, state: FSMContext) -> None:
     """Показать лиды (сразу открываем 1-ю карточку)."""
     leads = await get_hot_leads()

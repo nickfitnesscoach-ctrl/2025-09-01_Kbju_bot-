@@ -1,11 +1,15 @@
 from datetime import datetime
 import logging
 
-from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, String, inspect
+from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, String, inspect, text
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.schema import AddColumn
 from sqlalchemy.exc import SQLAlchemyError
+
+try:  # pragma: no cover - совместимость разных версий SQLAlchemy
+    from sqlalchemy.schema import AddColumn
+except ImportError:  # pragma: no cover - fallback для SQLAlchemy 2.0+
+    AddColumn = None  # type: ignore[assignment]
 
 from config import DB_URL, DEBUG
 
@@ -73,13 +77,18 @@ def _ensure_hot_lead_notified_column(sync_conn) -> None:
         return
 
     logger.info("Adding users.hot_lead_notified_at column for hot lead notifications")
-    ddl = AddColumn(
-        User.__table__,
-        Column("hot_lead_notified_at", DateTime, nullable=True),
-    )
 
     try:
-        sync_conn.execute(ddl)
+        if AddColumn is not None:
+            ddl = AddColumn(
+                User.__table__,
+                Column("hot_lead_notified_at", DateTime, nullable=True),
+            )
+            sync_conn.execute(ddl)
+        else:
+            sync_conn.execute(
+                text("ALTER TABLE users ADD COLUMN hot_lead_notified_at DATETIME")
+            )
     except SQLAlchemyError as exc:  # pragma: no cover - defensive logging
         logger.exception("Failed to add users.hot_lead_notified_at column: %s", exc)
         refreshed_columns = {

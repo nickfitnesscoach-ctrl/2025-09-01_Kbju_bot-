@@ -7,13 +7,16 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import desc, func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 
 from app.database.models import User, async_session
 from utils.notifications import notify_lead_card, notify_new_hot_lead
+from config import ENABLE_HOT_LEAD_ALERTS
 
 
 logger = logging.getLogger(__name__)
+
+_missing_hot_lead_column_logged = False
 
 
 async def set_user(tg_id: int, username: str | None = None, first_name: str | None = None) -> None:
@@ -186,13 +189,27 @@ async def update_user_status(
         else:
             logger.debug("User with tg_id %s not found for status update", tg_id)
 
-    if should_check_hot_lead and user_snapshot:
-        if await was_hot_lead_notified(tg_id):
+    if ENABLE_HOT_LEAD_ALERTS and should_check_hot_lead and user_snapshot:
+        try:
+            already_notified = await was_hot_lead_notified(tg_id)
+        except Exception as exc:  # noqa: BLE001 - не блокируем основной поток
+            logger.warning("Failed to check hot lead notification for user %s: %s", tg_id, exc)
+            already_notified = False
+
+        if already_notified:
             logger.debug("Hot lead notification already sent for user %s; skipping", tg_id)
         else:
-            notification_sent = await notify_new_hot_lead(user_snapshot)
+            notification_sent = False
+            try:
+                notification_sent = await notify_new_hot_lead(user_snapshot)
+            except Exception as exc:  # noqa: BLE001 - доп. защита от неожиданных ошибок
+                logger.exception("Error while sending hot lead notification for user %s: %s", tg_id, exc)
+
             if notification_sent:
-                await mark_hot_lead_notified(tg_id)
+                try:
+                    await mark_hot_lead_notified(tg_id)
+                except Exception as exc:  # noqa: BLE001 - не мешаем основной логике
+                    logger.warning("Failed to mark hot lead notification for user %s: %s", tg_id, exc)
 
     return updated_user
 
@@ -266,22 +283,51 @@ async def count_started_leads(since: datetime | None = None) -> int:
 async def was_hot_lead_notified(tg_id: int) -> bool:
     """Проверить, было ли отправлено уведомление о горячем лиде."""
 
-    async with async_session() as session:
-        notified_at = await session.scalar(
-            select(User.hot_lead_notified_at).where(User.tg_id == tg_id)
-        )
-        return notified_at is not None
+    try:
+        async with async_session() as session:
+            notified_at = await session.scalar(
+                select(User.hot_lead_notified_at).where(User.tg_id == tg_id)
+            )
+            return notified_at is not None
+    except (OperationalError, ProgrammingError) as exc:
+        _log_missing_hot_lead_column(exc)
+        return False
+    except SQLAlchemyError as exc:  # pragma: no cover - логирование критичных ошибок БД
+        logger.exception("Failed to check hot lead notification flag for user %s: %s", tg_id, exc)
+        return False
 
 
 async def mark_hot_lead_notified(tg_id: int) -> None:
     """Отметить, что уведомление о горячем лиде отправлено."""
 
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+    try:
+        async with async_session() as session:
+            user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
-        if not user:
-            logger.debug("Cannot mark hot lead notification for missing user %s", tg_id)
-            return
+            if not user:
+                logger.debug("Cannot mark hot lead notification for missing user %s", tg_id)
+                return
 
-        user.hot_lead_notified_at = datetime.utcnow()
-        await session.commit()
+            if not hasattr(user, "hot_lead_notified_at"):
+                logger.debug("User model missing hot_lead_notified_at attribute; skip mark for %s", tg_id)
+                return
+
+            user.hot_lead_notified_at = datetime.utcnow()
+            await session.commit()
+    except (OperationalError, ProgrammingError) as exc:
+        _log_missing_hot_lead_column(exc)
+    except SQLAlchemyError as exc:  # pragma: no cover - не прерываем основной сценарий
+        logger.exception("Failed to mark hot lead notification for user %s: %s", tg_id, exc)
+
+
+def _log_missing_hot_lead_column(exc: Exception) -> None:
+    global _missing_hot_lead_column_logged
+    if _missing_hot_lead_column_logged:
+        logger.debug("Hot lead notification column still missing: %s", exc)
+        return
+
+    _missing_hot_lead_column_logged = True
+    logger.warning(
+        "Hot lead notification column unavailable; skipping hot lead tracking: %s",
+        exc,
+    )
