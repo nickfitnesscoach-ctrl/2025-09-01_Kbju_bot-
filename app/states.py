@@ -25,3 +25,4 @@ class AdminStates(StatesGroup):
     broadcast = State()
     statistics = State()
     viewing_leads = State()  # для пагинации лидов
+    lead_reply = State()

@@ -187,7 +187,7 @@ async def _show_lead_card(
     lead = leads_list[index]
 
     # Сохраняем в FSM для навигации
-    await state.update_data(leads_list=leads_list, current_index=index)
+    await state.update_data(leads_list=leads_list, current_index=index, reply_target_id=None)
     await state.set_state(AdminStates.viewing_leads)
 
     # Подготовка полей
@@ -314,6 +314,113 @@ async def admin_contact_lead(callback: CallbackQuery) -> None:
 
     logger.info("Contact prompt delivered to lead %s", lead_id)
     await callback.answer("Сообщение отправлено")
+
+
+async def _restore_reply_state(state: FSMContext) -> None:
+    """Вернуть FSM в режим просмотра лидов и очистить контекст ответа."""
+
+    data = await state.get_data()
+    leads_list = data.get("leads_list")
+    current_index = data.get("current_index")
+
+    if leads_list is not None and current_index is not None:
+        await state.set_state(AdminStates.viewing_leads)
+        await state.update_data(reply_target_id=None)
+    else:
+        await state.clear()
+
+
+@admin.callback_query(F.data.startswith("lead_reply:"))
+async def admin_reply_lead(callback: CallbackQuery, state: FSMContext) -> None:
+    """Подготовить отправку сообщения лиду от имени бота."""
+
+    admin_id = callback.from_user.id if callback.from_user else None
+    logger.info("Admin %s pressed lead_reply button with data %s", admin_id, callback.data)
+
+    if admin_id != ADMIN_CHAT_ID:
+        logger.warning("Unauthorized lead_reply button press from %s", admin_id)
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    try:
+        _, tg_id_str = callback.data.split(":", 1)
+        lead_id = int(tg_id_str)
+    except (AttributeError, ValueError):
+        logger.warning("Invalid lead_reply payload: %s", callback.data)
+        await callback.answer("Некорректные данные", show_alert=True)
+        return
+
+    await state.update_data(reply_target_id=lead_id)
+    await state.set_state(AdminStates.lead_reply)
+
+    prompt = (
+        "Напишите сообщение, и бот отправит его пользователю.\n"
+        "Команда /cancel или слово 'отмена' — чтобы отменить."
+    )
+    if callback.message:
+        await callback.message.answer(prompt)
+
+    await callback.answer("Введите текст сообщения")
+
+
+@admin.message(Admin(), AdminStates.lead_reply)
+async def admin_send_lead_reply(message: Message, state: FSMContext) -> None:
+    """Отправить сообщение выбранному лиду от имени бота."""
+
+    data = await state.get_data()
+    lead_id = data.get("reply_target_id")
+
+    if message.text and message.text.lower().strip() in {"/cancel", "отмена"}:
+        await _restore_reply_state(state)
+        await message.answer("Отправка сообщения отменена.")
+        return
+
+    if not lead_id:
+        logger.warning("Lead reply requested without target in state")
+        await message.answer("Не выбран лид для ответа.")
+        await state.clear()
+        return
+
+    logger.info("Admin %s is sending reply to lead %s", message.from_user.id if message.from_user else None, lead_id)
+
+    try:
+        await message.send_copy(chat_id=lead_id)
+    except TypeError:
+        if message.text:
+            try:
+                await message.bot.send_message(chat_id=lead_id, text=message.text)
+            except TelegramForbiddenError as exc:
+                logger.warning("Lead %s blocked bot during reply: %s", lead_id, exc)
+                await message.answer("Бот не может написать этому пользователю.")
+                await _restore_reply_state(state)
+                return
+            except (TelegramBadRequest, TelegramNetworkError) as exc:
+                logger.error("Failed to send text reply to lead %s: %s", lead_id, exc)
+                await message.answer("Не удалось отправить сообщение.")
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Unexpected error while sending text reply to %s: %s", lead_id, exc)
+                await message.answer("Произошла ошибка при отправке.")
+                return
+        else:
+            await message.answer("Этот тип сообщения пока не поддерживается.")
+            return
+    except TelegramForbiddenError as exc:
+        logger.warning("Lead %s blocked bot during reply: %s", lead_id, exc)
+        await message.answer("Бот не может написать этому пользователю.")
+        await _restore_reply_state(state)
+        return
+    except (TelegramBadRequest, TelegramNetworkError) as exc:
+        logger.error("Failed to deliver reply to lead %s: %s", lead_id, exc)
+        await message.answer("Не удалось отправить сообщение.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error while sending reply to %s: %s", lead_id, exc)
+        await message.answer("Произошла ошибка при отправке.")
+        return
+
+    await message.answer("Сообщение отправлено.")
+    await _restore_reply_state(state)
 
 
 @admin.callback_query(F.data == "admin_menu")
