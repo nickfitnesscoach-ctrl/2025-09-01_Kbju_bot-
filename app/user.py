@@ -51,10 +51,12 @@ from app.keyboards import (
 from app.states import KBJUStates
 from app.texts import get_text, get_button_text, get_media_id
 from app.webhook import TimerService, WebhookService
-from utils.notifications import CONTACT_REQUEST_MESSAGE, notify_new_lead
 from config import CHANNEL_URL, ADMIN_CHAT_ID
-from utils.notifications import notify_new_lead
-from config import CHANNEL_URL
+from utils.notifications import (
+    CONTACT_REQUEST_MESSAGE,
+    notify_lead_card,
+    notify_lead_summary,
+)
 
 logger = logging.getLogger(__name__)
 user = Router()
@@ -188,12 +190,12 @@ async def calculate_and_save_kbju(user_id: int, user_data: dict) -> dict:
         "goal": user_data.get("goal"),
         "calories": kbju.get("calories"),
     }
-    asyncio.create_task(notify_new_lead(lead_payload))
+    asyncio.create_task(notify_lead_card(lead_payload))
 
     # Уведомляем админа (не блокируем UI — запускаем как задачу)
     name = user_data.get("first_name") or user_data.get("username") or str(user_id)
     contact = user_data.get("username") and f"@{user_data['username']}" or "—"
-    asyncio.create_task(notify_new_lead(name=name, contact=contact))
+    asyncio.create_task(notify_lead_summary(name=name, contact=contact))
 
     return kbju
 
@@ -206,6 +208,10 @@ async def forward_lead_contact_response(message: Message) -> None:
 
     lead_id = message.from_user.id
     logger.info("Forwarding contact reply from lead %s to admin", lead_id)
+
+    if ADMIN_CHAT_ID is None:
+        logger.warning("Cannot forward contact reply because ADMIN_CHAT_ID is not configured")
+        return
 
     try:
         await message.forward(chat_id=ADMIN_CHAT_ID)
