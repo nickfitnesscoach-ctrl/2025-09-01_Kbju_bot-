@@ -253,6 +253,17 @@ async def update_drip_stage(tg_id: int, *, cohort: str, stage: int) -> bool:
             )
             return False
 
+        current_stage = int(getattr(user, column_name, 0) or 0)
+        if current_stage >= stage_value:
+            logger.debug(
+                "DRIP stage not updated for user %s (cohort=%s): current=%s target=%s",
+                tg_id,
+                cohort,
+                current_stage,
+                stage_value,
+            )
+            return False
+
         setattr(user, column_name, stage_value)
         user.updated_at = datetime.utcnow()
         await session.commit()
