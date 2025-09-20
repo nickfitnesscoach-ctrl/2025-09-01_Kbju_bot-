@@ -18,7 +18,6 @@ from config import (
     ENABLE_STALLED_REMINDER,
     N8N_WEBHOOK_SECRET,
     N8N_WEBHOOK_URL,
-    STALLED_REMINDER_DELAY_MIN,
 )
 
 logger = logging.getLogger(__name__)
@@ -238,7 +237,7 @@ class TimerService:
     async def start_stalled_timer(
         cls,
         user_id: int,
-        delay_minutes: int = STALLED_REMINDER_DELAY_MIN,
+        delay_minutes: int | None = None,
     ) -> None:
         if not ENABLE_STALLED_REMINDER:
             logger.debug(
@@ -246,6 +245,11 @@ class TimerService:
             )
             cls.cancel_stalled_timer(user_id)
             return
+
+        if delay_minutes is None:
+            from config import STALLED_REMINDER_DELAY_MIN as _DELAY
+
+            delay_minutes = _DELAY
 
         if delay_minutes <= 0:
             logger.warning(
@@ -330,11 +334,8 @@ class TimerService:
                         )
                 cls.stalled_timers.pop(user_id, None)
 
+        logger.debug("Scheduling stalled reminder: user=%s delay=%s", user_id, delay_minutes)
+
         task = asyncio.create_task(timer_callback())
         cls.stalled_timers[user_id] = task
-        logger.debug(
-            "Started stalled reminder timer for user %s (%s minutes)",
-            user_id,
-            delay_minutes,
-        )
 
