@@ -12,7 +12,14 @@ from typing import Any, Dict, Union
 import aiohttp
 
 from app.database.models import User
-from config import DEBUG, N8N_WEBHOOK_SECRET, N8N_WEBHOOK_URL
+from app.texts import get_text
+from config import (
+    DEBUG,
+    ENABLE_STALLED_REMINDER,
+    N8N_WEBHOOK_SECRET,
+    N8N_WEBHOOK_URL,
+    STALLED_REMINDER_DELAY_MIN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +190,7 @@ class TimerService:
     """Сервис для работы с таймерами."""
 
     active_timers: Dict[int, asyncio.Task] = {}
+    stalled_timers: Dict[int, asyncio.Task] = {}
 
     @classmethod
     async def start_calculated_timer(cls, user_id: int, delay_minutes: int = 60):
@@ -207,4 +215,126 @@ class TimerService:
         if task and not task.done():
             task.cancel()
             logger.debug("Cancelled timer for user %s", user_id)
+
+    @classmethod
+    def cancel_stalled_timer(cls, user_id: int) -> None:
+        task = cls.stalled_timers.pop(user_id, None)
+        if task and not task.done():
+            task.cancel()
+            logger.debug("Cancelled stalled reminder for user %s", user_id)
+
+    @staticmethod
+    def _is_user_finished(status: str | None) -> bool:
+        if not status:
+            return False
+
+        normalized = status.lower()
+        if normalized == "calculated":
+            return True
+
+        return normalized.startswith("hotlead") or normalized.startswith("coldlead")
+
+    @classmethod
+    async def start_stalled_timer(
+        cls,
+        user_id: int,
+        delay_minutes: int = STALLED_REMINDER_DELAY_MIN,
+    ) -> None:
+        if not ENABLE_STALLED_REMINDER:
+            logger.debug(
+                "Stalled reminder feature disabled; skip scheduling for user %s", user_id
+            )
+            cls.cancel_stalled_timer(user_id)
+            return
+
+        if delay_minutes <= 0:
+            logger.warning(
+                "Stalled reminder delay is non-positive (%s); skip scheduling for user %s",
+                delay_minutes,
+                user_id,
+            )
+            cls.cancel_stalled_timer(user_id)
+            return
+
+        cls.cancel_stalled_timer(user_id)
+
+        async def timer_callback() -> None:
+            from app.database.requests import get_user
+
+            bot = None
+            try:
+                await asyncio.sleep(delay_minutes * 60)
+
+                user = await get_user(user_id)
+                if not user:
+                    logger.debug(
+                        "Stalled reminder: user %s not found in database; skip notification",
+                        user_id,
+                    )
+                    return
+
+                status = getattr(user, "funnel_status", "")
+                if cls._is_user_finished(status):
+                    logger.debug(
+                        "Stalled reminder: user %s already finished with status %s; skip",
+                        user_id,
+                        status,
+                    )
+                    return
+
+                from aiogram import Bot
+                from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+                from config import TOKEN
+
+                if not TOKEN:
+                    logger.warning(
+                        "Cannot send stalled reminder to user %s because TOKEN is not configured",
+                        user_id,
+                    )
+                    return
+
+                bot = Bot(token=TOKEN)
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=get_text("stalled_reminder_button"),
+                                callback_data="resume_calc",
+                            )
+                        ]
+                    ]
+                )
+
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=get_text("stalled_reminder"),
+                    reply_markup=keyboard,
+                    parse_mode="HTML",
+                )
+                logger.info("Stalled reminder sent to user %s", user_id)
+            except asyncio.CancelledError:
+                logger.debug("Stalled reminder timer for user %s was cancelled", user_id)
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Failed to send stalled reminder to user %s: %s", user_id, exc
+                )
+            finally:
+                if bot:
+                    try:
+                        await bot.session.close()
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to close bot session after stalled reminder for user %s",
+                            user_id,
+                        )
+                cls.stalled_timers.pop(user_id, None)
+
+        task = asyncio.create_task(timer_callback())
+        cls.stalled_timers[user_id] = task
+        logger.debug(
+            "Started stalled reminder timer for user %s (%s minutes)",
+            user_id,
+            delay_minutes,
+        )
 

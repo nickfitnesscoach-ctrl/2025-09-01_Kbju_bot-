@@ -73,6 +73,7 @@ DEBUG = _bool(os.getenv("DEBUG", "false"))
 ENABLE_HOT_LEAD_ALERTS = os.getenv("ENABLE_HOT_LEAD_ALERTS", "true").lower() == "true"
 
 # Напоминание пользователям, которые не завершили расчёт
+ENABLE_STALLED_REMINDER = _bool(os.getenv("ENABLE_STALLED_REMINDER", "true"))
 STALLED_REMINDER_DELAY_MIN = int(os.getenv("STALLED_REMINDER_DELAY_MIN", "120"))
 
 _missing_required: list[str] = []
