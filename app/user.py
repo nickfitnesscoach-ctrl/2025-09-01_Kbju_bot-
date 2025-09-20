@@ -1240,15 +1240,42 @@ async def process_lead_request(callback: CallbackQuery):
     if not (callback.from_user and callback.message):
         return
 
-    await update_user_status(
+    user_before = await get_user(callback.from_user.id)
+    already_hot_lead = bool(
+        user_before and str(user_before.funnel_status or "").startswith("hotlead_")
+    )
+
+    try:
+        TimerService.cancel_timer(callback.from_user.id)
+    except Exception:
+        logger.debug("Failed to cancel timer for user %s", callback.from_user.id, exc_info=True)
+
+    try:
+        cancel_delayed_offer(callback.from_user.id)
+    except Exception:
+        logger.debug(
+            "Failed to cancel delayed offer for user %s", callback.from_user.id, exc_info=True
+        )
+
+    updated_user = await update_user_status(
         tg_id=callback.from_user.id,
         status=FUNNEL_STATUSES["hotlead_consultation"],
         priority_score=PRIORITY_SCORES["consultation_request"],
     )
 
-    user_data = await get_user(callback.from_user.id)
-    if user_data:
-        await WebhookService.send_hot_lead(_user_to_dict(user_data), "consultation_request")
+    user_record = updated_user or await get_user(callback.from_user.id) or user_before
+
+    if user_record and not already_hot_lead:
+        try:
+            await WebhookService.send_hot_lead(
+                _user_to_dict(user_record), "consultation_request"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "Failed to send hot lead webhook for user %s: %s",
+                callback.from_user.id,
+                exc,
+            )
 
     await callback.message.edit_text(
         get_text(
@@ -1272,16 +1299,10 @@ async def process_priority(callback: CallbackQuery):
 
     priority = callback.data.split("_", 1)[1]  # nutrition/training/schedule
 
-    await update_user_status(
+    await update_user_data(
         tg_id=callback.from_user.id,
-        status=FUNNEL_STATUSES["hotlead_delayed"],
         priority=priority,
-        priority_score=PRIORITY_SCORES["hotlead_delayed"],
     )
-
-    user_data = await get_user(callback.from_user.id)
-    if user_data:
-        await WebhookService.send_hot_lead(_user_to_dict(user_data), priority)
 
     await callback.message.edit_text(get_text("consultation_offer"), reply_markup=consultation_contact_keyboard(), parse_mode="HTML")
     await callback.answer()
