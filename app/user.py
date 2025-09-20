@@ -50,6 +50,7 @@ from app.database.requests import (
     set_user,
     update_user_data,
     update_user_status,
+    update_last_activity,
 )
 from app.features import CHECK_CALLBACK_DATA, ensure_subscription_and_continue
 from app.keyboards import (
@@ -307,14 +308,18 @@ async def _restart_stalled_reminder(user_id: int) -> None:
         await TimerService.start_stalled_timer(user_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to restart stalled reminder for user %s: %s", user_id, exc)
+    finally:
+        await safe_db_operation(update_last_activity, user_id)
 
 
-def _cancel_stalled_reminder(user_id: int) -> None:
+async def _cancel_stalled_reminder(user_id: int) -> None:
     """Отменить напоминание о незавершённой анкете."""
     try:
         TimerService.cancel_stalled_timer(user_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to cancel stalled reminder for user %s: %s", user_id, exc)
+    finally:
+        await safe_db_operation(update_last_activity, user_id)
 
 
 _delayed_offer_tasks: dict[int, asyncio.Task] = {}
@@ -1043,7 +1048,7 @@ async def _start_kbju_flow_inner(callback: CallbackQuery) -> None:
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         pass
-    _cancel_stalled_reminder(callback.from_user.id)
+    await _cancel_stalled_reminder(callback.from_user.id)
 
     await callback.message.edit_text(
         get_text("kbju_start"),
@@ -1093,7 +1098,7 @@ async def resume_calculation(callback: CallbackQuery, state: FSMContext):
         return
 
     user_id = callback.from_user.id
-    _cancel_stalled_reminder(user_id)
+    await _cancel_stalled_reminder(user_id)
     await state.clear()
     await _start_kbju_flow_inner(callback)
     await callback.answer()
@@ -1223,7 +1228,7 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
 
         # Рассчитываем КБЖУ и сохраняем данные пользователя
         kbju = await calculate_and_save_kbju(callback.from_user.id, data)
-        _cancel_stalled_reminder(callback.from_user.id)
+        await _cancel_stalled_reminder(callback.from_user.id)
 
         # Запускаем таймер для воронки
         asyncio.create_task(start_funnel_timer(callback.from_user.id))
@@ -1270,7 +1275,7 @@ async def process_delayed_yes(callback: CallbackQuery):
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         pass
-    _cancel_stalled_reminder(callback.from_user.id)
+    await _cancel_stalled_reminder(callback.from_user.id)
 
     await callback.message.edit_text(get_text("hot_lead_priorities"), reply_markup=priority_keyboard(), parse_mode="HTML")
     await callback.answer()
@@ -1284,7 +1289,7 @@ async def process_delayed_no(callback: CallbackQuery):
     if not (callback.from_user and callback.message):
         return
 
-    _cancel_stalled_reminder(callback.from_user.id)
+    await _cancel_stalled_reminder(callback.from_user.id)
     await update_user_status(
         tg_id=callback.from_user.id,
         status=FUNNEL_STATUSES["coldlead_delayed"],
@@ -1322,7 +1327,7 @@ async def process_lead_request(callback: CallbackQuery):
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         logger.debug("Failed to cancel timer for user %s", callback.from_user.id, exc_info=True)
-    _cancel_stalled_reminder(callback.from_user.id)
+    await _cancel_stalled_reminder(callback.from_user.id)
 
     try:
         cancel_delayed_offer(callback.from_user.id)
@@ -1394,7 +1399,7 @@ async def process_cold_lead(callback: CallbackQuery):
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         pass
-    _cancel_stalled_reminder(callback.from_user.id)
+    await _cancel_stalled_reminder(callback.from_user.id)
 
     await update_user_status(
         tg_id=callback.from_user.id,

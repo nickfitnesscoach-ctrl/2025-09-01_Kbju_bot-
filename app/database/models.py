@@ -53,7 +53,16 @@ class User(Base):
     priority: Mapped[str] = mapped_column(String(20), nullable=True)  # nutrition/training/schedule
     priority_score: Mapped[int] = mapped_column(Integer, default=0)  # Числовой приоритет для сортировки
     hot_lead_notified_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    
+
+    # Признаки активности и прогресса drip-воронки
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    drip_stage_stalled: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default=text("0")
+    )
+    drip_stage_tips: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default=text("0")
+    )
+
     # Временные метки
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -63,36 +72,72 @@ class User(Base):
 async def async_main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_ensure_hot_lead_notified_column)
+        await conn.run_sync(_ensure_additional_user_columns)
 
 
-def _ensure_hot_lead_notified_column(sync_conn) -> None:
-    """Create the hot_lead_notified_at column if it is missing."""
+def _ensure_additional_user_columns(sync_conn) -> None:
+    """Гарантировать наличие дополнительных колонок в таблице users."""
 
     inspector = inspect(sync_conn)
-    columns = {column["name"] for column in inspector.get_columns(User.__tablename__)}
+    existing = {column["name"] for column in inspector.get_columns(User.__tablename__)}
 
-    if "hot_lead_notified_at" in columns:
-        logger.debug("users.hot_lead_notified_at already exists")
-        return
+    def _ensure_column(
+        column_name: str,
+        column: Column,
+        fallback_sql: str,
+        log_message: str,
+    ) -> None:
+        if column_name in existing:
+            logger.debug("users.%s already exists", column_name)
+            return
 
-    logger.info("Adding users.hot_lead_notified_at column for hot lead notifications")
+        logger.info(log_message)
 
-    try:
-        if AddColumn is not None:
-            ddl = AddColumn(
-                User.__table__,
-                Column("hot_lead_notified_at", DateTime, nullable=True),
-            )
-            sync_conn.execute(ddl)
-        else:
-            sync_conn.execute(
-                text("ALTER TABLE users ADD COLUMN hot_lead_notified_at DATETIME")
-            )
-    except SQLAlchemyError as exc:  # pragma: no cover - defensive logging
-        logger.exception("Failed to add users.hot_lead_notified_at column: %s", exc)
-        refreshed_columns = {
-            column["name"] for column in inspector.get_columns(User.__tablename__)
-        }
-        if "hot_lead_notified_at" not in refreshed_columns:
-            raise
+        try:
+            if AddColumn is not None:
+                ddl = AddColumn(User.__table__, column)
+                sync_conn.execute(ddl)
+            else:
+                sync_conn.execute(text(fallback_sql))
+        except SQLAlchemyError as exc:  # pragma: no cover - defensive logging
+            logger.exception("Failed to add users.%s column: %s", column_name, exc)
+            refreshed = {
+                col["name"] for col in inspector.get_columns(User.__tablename__)
+            }
+            if column_name not in refreshed:
+                raise
+
+    _ensure_column(
+        "hot_lead_notified_at",
+        Column("hot_lead_notified_at", DateTime, nullable=True),
+        "ALTER TABLE users ADD COLUMN hot_lead_notified_at DATETIME",
+        "Adding users.hot_lead_notified_at column for hot lead notifications",
+    )
+    _ensure_column(
+        "last_activity_at",
+        Column("last_activity_at", DateTime, nullable=True),
+        "ALTER TABLE users ADD COLUMN last_activity_at DATETIME",
+        "Adding users.last_activity_at column for drip follow-ups",
+    )
+    _ensure_column(
+        "drip_stage_stalled",
+        Column(
+            "drip_stage_stalled",
+            Integer,
+            nullable=False,
+            server_default=text("0"),
+        ),
+        "ALTER TABLE users ADD COLUMN drip_stage_stalled INTEGER NOT NULL DEFAULT 0",
+        "Adding users.drip_stage_stalled column for drip follow-ups",
+    )
+    _ensure_column(
+        "drip_stage_tips",
+        Column(
+            "drip_stage_tips",
+            Integer,
+            nullable=False,
+            server_default=text("0"),
+        ),
+        "ALTER TABLE users ADD COLUMN drip_stage_tips INTEGER NOT NULL DEFAULT 0",
+        "Adding users.drip_stage_tips column for drip follow-ups",
+    )

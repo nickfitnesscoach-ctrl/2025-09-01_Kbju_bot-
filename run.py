@@ -14,6 +14,7 @@ from aiogram.types import (
 
 from app.admin import admin
 from app.database.models import async_main
+from app.drip_followups import DripFollowupService
 from app.user import user
 from config import (
     ADMIN_CHAT_ID,
@@ -24,6 +25,7 @@ from config import (
     STALLED_REMINDER_DELAY_MIN,
     TOKEN,
     validate_required_settings,
+    log_drip_configuration,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,7 @@ def _log_startup_configuration(allowed_updates: Iterable[str]) -> None:
         ENABLE_STALLED_REMINDER,
         STALLED_REMINDER_DELAY_MIN,
     )
+    log_drip_configuration(logger)
 
 
 async def _configure_bot_commands(bot: Bot) -> None:
@@ -158,6 +161,8 @@ async def startup(dispatcher: Dispatcher, bot: Bot):
         logger.info("Fitness Bot started successfully!")
         logger.info("%s", "=" * 50)
 
+        DripFollowupService.start(bot)
+
     except Exception as e:
         logger.exception("Startup failed: %s", e)
         raise
@@ -166,6 +171,11 @@ async def startup(dispatcher: Dispatcher, bot: Bot):
 async def shutdown(dispatcher: Dispatcher):
     """Функция остановки бота"""
     logger.info("Stopping Fitness Bot...")
+
+    try:
+        await DripFollowupService.stop()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to stop drip follow-up worker: %s", exc)
 
     # Отменяем все активные таймеры
     try:
