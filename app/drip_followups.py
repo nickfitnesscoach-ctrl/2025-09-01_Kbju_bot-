@@ -1,19 +1,17 @@
-"""Фоновая рассылка догоняющих кейсов по неактивности."""
+"""Фоновая рассылка DRIP-сообщений по неактивности."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Tuple
 
 from aiogram import Bot
-from sqlalchemy import or_, select
+from sqlalchemy import func, not_, or_, select
 
-from app.constants import FUNNEL_STATUSES
 from app.database.models import User, async_session
 from app.database.requests import update_drip_stage
 from app.texts import get_text
@@ -28,89 +26,25 @@ from config import (
 logger = logging.getLogger(__name__)
 
 _STAGE_LABELS = {1: "24h", 2: "48h", 3: "72h"}
-
-_COHORTS: Tuple[str, ...] = ("stalled", "tips")
+_STAGE_THRESHOLDS = {1: DRIP_24H_MIN, 2: DRIP_48H_MIN, 3: DRIP_72H_MIN}
 
 
 @dataclass(slots=True)
-class DripUserSnapshot:
+class DripCandidate:
     tg_id: int
-    gender: str | None
     funnel_status: str | None
+    gender: str | None
+    drip_stage: int
     last_activity_at: datetime | None
-    activity_at: datetime | None
-    activity_source: str | None
-    created_at: datetime | None
     updated_at: datetime | None
-    drip_stage_stalled: int
-    drip_stage_tips: int
-    has_started: bool
-
-
-def _has_started(user: User) -> bool:
-    return any(
-        getattr(user, field, None)
-        for field in ("gender", "age", "weight", "height", "activity", "goal")
-    )
+    created_at: datetime | None
 
 
 def _normalize_status(status: str | None) -> str:
     return (status or "").strip().lower()
 
 
-def _is_finished_status(status: str | None) -> bool:
-    normalized = _normalize_status(status)
-    if not normalized:
-        return False
-    if normalized == FUNNEL_STATUSES["calculated"]:
-        return True
-    if normalized.startswith("hotlead"):
-        return True
-    return normalized == FUNNEL_STATUSES["coldlead"]
-
-
-def _determine_next_stage(current_stage: int, elapsed_minutes: float) -> int | None:
-    if current_stage < 0:
-        current_stage = 0
-    if current_stage == 0 and elapsed_minutes >= DRIP_24H_MIN:
-        return 1
-    if current_stage <= 1 and elapsed_minutes >= DRIP_48H_MIN:
-        return 2
-    if current_stage <= 2 and elapsed_minutes >= DRIP_72H_MIN:
-        return 3
-    return None
-
-
-def _candidate_text_keys(stage_to_set: int, gender: str | None) -> List[str]:
-    base = {
-        1: "drip.case_24h",
-        2: "drip.case_48h",
-        3: "drip.case_72h",
-    }.get(stage_to_set)
-    if not base:
-        return []
-
-    gender_normalized = (gender or "").strip().lower()
-    keys: list[str] = []
-
-    if stage_to_set == 3:
-        keys.append(f"{base}.any.text")
-    else:
-        if gender_normalized == "male":
-            keys.append(f"{base}.male.text")
-        elif gender_normalized == "female":
-            keys.append(f"{base}.female.text")
-        else:
-            keys.append(f"{base}.any.text")
-
-        for fallback in (f"{base}.any.text", f"{base}.male.text", f"{base}.female.text"):
-            if fallback not in keys:
-                keys.append(fallback)
-
-    return keys
-
-
-def _to_naive(value: datetime | None) -> datetime | None:
+def _to_utc_naive(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is not None:
@@ -119,339 +53,243 @@ def _to_naive(value: datetime | None) -> datetime | None:
 
 
 def _format_dt(value: datetime | None) -> str:
-    naive_value = _to_naive(value)
-    if naive_value is None:
+    normalized = _to_utc_naive(value)
+    if normalized is None:
         return "none"
     try:
-        return naive_value.replace(microsecond=0).isoformat() + "Z"
-    except Exception:  # noqa: BLE001 - best effort formatting
-        return str(naive_value)
+        return normalized.replace(microsecond=0).isoformat() + "Z"
+    except Exception:  # noqa: BLE001 - best effort for logging
+        return str(normalized)
 
 
-def _resolve_activity_timestamp(
-    last_activity: datetime | None,
-    updated_at: datetime | None,
-    created_at: datetime | None,
-) -> tuple[datetime | None, str | None]:
-    last_activity = _to_naive(last_activity)
-    updated_at = _to_naive(updated_at)
-    created_at = _to_naive(created_at)
+def _resolve_activity(candidate: DripCandidate) -> tuple[datetime | None, str | None]:
+    last_activity = _to_utc_naive(candidate.last_activity_at)
+    updated_at = _to_utc_naive(candidate.updated_at)
+    created_at = _to_utc_naive(candidate.created_at)
 
-    if last_activity:
+    if last_activity is not None:
         return last_activity, "last_activity_at"
-
-    fallback_candidates = [
-        candidate
-        for candidate in ((updated_at, "updated_at"), (created_at, "created_at"))
-        if candidate[0] is not None
-    ]
-    if not fallback_candidates:
-        return None, None
-
-    fallback_candidates.sort(key=lambda item: item[0], reverse=True)
-    chosen_dt, chosen_source = fallback_candidates[0]
-    return chosen_dt, chosen_source
+    if updated_at is not None:
+        return updated_at, "updated_at"
+    if created_at is not None:
+        return created_at, "created_at"
+    return None, None
 
 
 def _threshold_for_stage(stage: int) -> int:
-    return {1: DRIP_24H_MIN, 2: DRIP_48H_MIN, 3: DRIP_72H_MIN}.get(stage, 0)
+    return _STAGE_THRESHOLDS.get(stage, 0)
 
 
-def _cohort_membership(snapshot: DripUserSnapshot, cohort: str) -> tuple[bool, str]:
-    status = _normalize_status(snapshot.funnel_status)
-
-    if cohort == "stalled":
-        if not snapshot.has_started:
-            return False, "not_started"
-        if _is_finished_status(status):
-            return False, "finished_status"
-        if status == FUNNEL_STATUSES["coldlead_delayed"]:
-            return False, "tips_branch"
-        return True, "eligible"
-
-    if cohort == "tips":
-        if status == FUNNEL_STATUSES["coldlead_delayed"]:
-            return True, "eligible"
-        if _is_finished_status(status):
-            return False, "finished_status"
-        return False, "status_mismatch"
-
-    return False, "unknown_cohort"
+def _next_stage(current_stage: int) -> int | None:
+    if current_stage is None:
+        current_stage = 0
+    if current_stage >= 3:
+        return None
+    target_stage = current_stage + 1
+    if target_stage not in _STAGE_THRESHOLDS:
+        return None
+    return target_stage
 
 
-async def _load_candidates() -> tuple[list[DripUserSnapshot], str]:
-    query = select(User).where(
-        or_(User.drip_stage_stalled < 3, User.drip_stage_tips < 3)
+def _minutes_since(reference: datetime | None) -> float | None:
+    if reference is None:
+        return None
+    delta = datetime.utcnow() - reference
+    return delta.total_seconds() / 60.0
+
+
+def _stage_text_candidates(stage: int, gender: str | None) -> Iterable[str]:
+    base_key = {1: "drip.case_24h", 2: "drip.case_48h", 3: "drip.case_72h"}.get(stage)
+    if not base_key:
+        return []
+
+    normalized_gender = (gender or "").strip().lower()
+    candidates: list[str] = []
+
+    if stage in (1, 2):
+        if normalized_gender in {"male", "female"}:
+            candidates.append(f"{base_key}.{normalized_gender}.text")
+        candidates.extend(
+            key
+            for key in (
+                f"{base_key}.any.text",
+                f"{base_key}.male.text",
+                f"{base_key}.female.text",
+            )
+            if key not in candidates
+        )
+    else:
+        candidates.append(f"{base_key}.any.text")
+        candidates.append(f"{base_key}.text")
+
+    return candidates
+
+
+def _choose_stage_text(stage: int, gender: str | None) -> tuple[str | None, str | None]:
+    for key in _stage_text_candidates(stage, gender):
+        text = get_text(key)
+        if text.startswith("[Текст не найден"):
+            continue
+        return text, key
+    return None, None
+
+
+async def _send_stage(bot: Bot, candidate: DripCandidate, stage: int) -> tuple[bool, str | None, str | None]:
+    text, key = _choose_stage_text(stage, candidate.gender)
+    if not text:
+        return False, key, "template-not-found"
+
+    try:
+        await bot.send_message(chat_id=candidate.tg_id, text=text, parse_mode="HTML")
+    except asyncio.CancelledError:  # pragma: no cover - cooperates with shutdown
+        raise
+    except Exception as exc:  # noqa: BLE001 - log failure and retry later
+        logger.warning(
+            "DRIP send failed | user=%s | stage=%s | label=%s | error=%s",
+            candidate.tg_id,
+            stage,
+            _STAGE_LABELS.get(stage, stage),
+            exc,
+        )
+        return False, key, str(exc)
+
+    return True, key, None
+
+
+def _log_verdict(candidate: DripCandidate, message: str) -> None:
+    logger.info(
+        "DRIP verdict | user=%s | %s",
+        candidate.tg_id,
+        message,
     )
+
+
+async def _process_candidate(bot: Bot, candidate: DripCandidate) -> None:
+    status = _normalize_status(candidate.funnel_status)
+
+    if status.startswith("hotlead"):
+        _log_verdict(candidate, f"skip (hotlead) status={status}")
+        return
+
+    eligible = status in {"new", "calculated"} or status.startswith("coldlead")
+    if not eligible:
+        _log_verdict(candidate, f"skip (status-not-eligible) status={status or 'unknown'}")
+        return
+
+    current_stage = max(0, int(candidate.drip_stage or 0))
+    next_stage = _next_stage(current_stage)
+    if next_stage is None:
+        _log_verdict(candidate, "done (already stage=3)")
+        return
+
+    reference, source = _resolve_activity(candidate)
+    if reference is None:
+        _log_verdict(
+            candidate,
+            (
+                "skip (no-activity-reference)"
+                + (f" status={status}" if status else "")
+                + f" last_activity={_format_dt(candidate.last_activity_at)}"
+                + f" updated={_format_dt(candidate.updated_at)}"
+                + f" created={_format_dt(candidate.created_at)}"
+            ),
+        )
+        return
+
+    minutes = _minutes_since(reference)
+    if minutes is None:
+        _log_verdict(
+            candidate,
+            (
+                "skip (no-activity-reference)"
+                + (f" status={status}" if status else "")
+                + f" last_activity={_format_dt(candidate.last_activity_at)}"
+                + f" updated={_format_dt(candidate.updated_at)}"
+                + f" created={_format_dt(candidate.created_at)}"
+            ),
+        )
+        return
+
+    minutes = max(0.0, minutes)
+    threshold = _threshold_for_stage(next_stage)
+    if minutes < threshold:
+        _log_verdict(
+            candidate,
+            f"skip (no-threshold) minutes={minutes:.1f} needed={threshold} source={source} status={status}",
+        )
+        return
+
+    sent, text_key, error = await _send_stage(bot, candidate, next_stage)
+    if not sent:
+        details = error or "unknown-error"
+        _log_verdict(candidate, f"send fail (stage {next_stage}): {details}")
+        return
+
+    updated = await update_drip_stage(
+        candidate.tg_id,
+        from_stage=current_stage,
+        to_stage=next_stage,
+    )
+    if updated:
+        candidate.drip_stage = next_stage
+    else:
+        logger.debug(
+            "DRIP stage advance skipped | user=%s | from=%s | target=%s",
+            candidate.tg_id,
+            current_stage,
+            next_stage,
+        )
+
+    suffix_parts = [
+        f"send ok (stage {next_stage})",
+        f"minutes={minutes:.1f}",
+        f"source={source}",
+    ]
+    if text_key:
+        suffix_parts.append(f"text={text_key}")
+    if status:
+        suffix_parts.append(f"status={status}")
+    _log_verdict(candidate, " ".join(suffix_parts))
+
+
+async def _load_candidates() -> tuple[Sequence[DripCandidate], str]:
+    status_expr = func.lower(func.coalesce(User.funnel_status, ""))
+    query = (
+        select(User)
+        .where(
+            or_(
+                status_expr == "new",
+                status_expr == "calculated",
+                status_expr.like("coldlead%"),
+            ),
+            not_(status_expr.like("hotlead%")),
+        )
+        .order_by(User.id)
+    )
+
     async with async_session() as session:
         result = await session.scalars(query)
         users = result.all()
 
-    snapshots: list[DripUserSnapshot] = []
+    snapshots: list[DripCandidate] = []
     for user in users:
-        last_activity = _to_naive(getattr(user, "last_activity_at", None))
-        updated_at = _to_naive(getattr(user, "updated_at", None))
-        created_at = _to_naive(getattr(user, "created_at", None))
-        activity_at, activity_source = _resolve_activity_timestamp(
-            last_activity,
-            updated_at,
-            created_at,
-        )
         snapshots.append(
-            DripUserSnapshot(
+            DripCandidate(
                 tg_id=user.tg_id,
-                gender=user.gender,
                 funnel_status=user.funnel_status,
-                last_activity_at=last_activity,
-                activity_at=activity_at,
-                activity_source=activity_source,
-                created_at=created_at,
-                updated_at=updated_at,
-                drip_stage_stalled=int(getattr(user, "drip_stage_stalled", 0) or 0),
-                drip_stage_tips=int(getattr(user, "drip_stage_tips", 0) or 0),
-                has_started=_has_started(user),
+                gender=getattr(user, "gender", None),
+                drip_stage=max(0, int(getattr(user, "drip_stage", 0) or 0)),
+                last_activity_at=getattr(user, "last_activity_at", None),
+                updated_at=getattr(user, "updated_at", None),
+                created_at=getattr(user, "created_at", None),
             )
         )
+
     return snapshots, str(query)
 
 
-async def _send_followup(
-    bot: Bot, snapshot: DripUserSnapshot, cohort: str, stage_to_set: int
-) -> bool:
-    candidates = _candidate_text_keys(stage_to_set, snapshot.gender)
-    text_to_send: str | None = None
-    chosen_key: str | None = None
-
-    for key in candidates:
-        text = get_text(key)
-        if text.startswith("[Текст не найден"):
-            continue
-        chosen_key = key
-        text_to_send = text
-        break
-
-    if not text_to_send:
-        logger.warning(
-            "DRIP %s skipped for user %s (cohort=%s): no text configured",
-            _STAGE_LABELS.get(stage_to_set, str(stage_to_set)),
-            snapshot.tg_id,
-            cohort,
-        )
-        return False
-
-    if (
-        chosen_key
-        and chosen_key.endswith(".any.text")
-        and (snapshot.gender or "").strip().lower() not in {"male", "female"}
-    ):
-        logger.info(
-            "DRIP %s using fallback text for user %s (cohort=%s): gender unknown -> %s",
-            _STAGE_LABELS.get(stage_to_set, str(stage_to_set)),
-            snapshot.tg_id,
-            cohort,
-            chosen_key,
-        )
-
-    try:
-        await bot.send_message(
-            chat_id=snapshot.tg_id,
-            text=text_to_send,
-            parse_mode="HTML",
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "DRIP %s failed for user %s (cohort=%s): %s",
-            _STAGE_LABELS.get(stage_to_set, str(stage_to_set)),
-            snapshot.tg_id,
-            cohort,
-            exc,
-        )
-        return False
-
-    logger.info(
-        "DRIP %s sent to user %s (cohort=%s, gender=%s, text_key=%s)",
-        _STAGE_LABELS.get(stage_to_set, str(stage_to_set)),
-        snapshot.tg_id,
-        cohort,
-        snapshot.gender or "unknown",
-        chosen_key,
-    )
-
-    try:
-        updated = await update_drip_stage(
-            snapshot.tg_id, cohort=cohort, stage=stage_to_set
-        )
-        if not updated:
-            logger.info(
-                "DRIP stage already set for user %s (cohort=%s): stage=%s",
-                snapshot.tg_id,
-                cohort,
-                stage_to_set,
-            )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "DRIP stage update failed for user %s (cohort=%s): %s",
-            snapshot.tg_id,
-            cohort,
-            exc,
-        )
-
-    return True
-
-
-async def _ensure_stage_guard(
-    snapshot: DripUserSnapshot, cohort: str, stage_to_set: int
-) -> tuple[bool, str, int | None]:
-    column_name = "drip_stage_stalled" if cohort == "stalled" else "drip_stage_tips"
-
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == snapshot.tg_id))
-
-    if not user:
-        return False, "user_missing", None
-
-    current_stage_db = int(getattr(user, column_name, 0) or 0)
-    snapshot_stage = int(getattr(snapshot, column_name, 0) or 0)
-
-    if current_stage_db > snapshot_stage:
-        logger.debug(
-            "DRIP %s stage drift detected for user %s (cohort=%s): snapshot=%s db=%s",
-            _STAGE_LABELS.get(stage_to_set, str(stage_to_set)),
-            snapshot.tg_id,
-            cohort,
-            snapshot_stage,
-            current_stage_db,
-        )
-        setattr(snapshot, column_name, current_stage_db)
-
-    if current_stage_db >= stage_to_set:
-        return False, f"stage_already_{current_stage_db}", current_stage_db
-
-    return True, "ok", current_stage_db
-
-
-async def _process_snapshot(
-    bot: Bot, snapshot: DripUserSnapshot
-) -> list[tuple[str, int, bool]]:
-    decisions: list[tuple[str, int, bool]] = []
-
-    if snapshot.tg_id is None:
-        return decisions
-
-    activity_at = snapshot.activity_at
-    if activity_at is None:
-        logger.info(
-            "DRIP candidate skipped | user=%s | reason=no_activity_timestamp | "
-            "last_activity=%s | updated_at=%s | created_at=%s",
-            snapshot.tg_id,
-            _format_dt(snapshot.last_activity_at),
-            _format_dt(snapshot.updated_at),
-            _format_dt(snapshot.created_at),
-        )
-        return decisions
-
-    now_utc = datetime.utcnow()
-    elapsed_seconds = (now_utc - activity_at).total_seconds()
-    if elapsed_seconds < 0:
-        logger.info(
-            "DRIP candidate skipped | user=%s | reason=activity_in_future | "
-            "activity_at=%s | now=%s",
-            snapshot.tg_id,
-            _format_dt(activity_at),
-            _format_dt(now_utc),
-        )
-        return decisions
-
-    elapsed_minutes = elapsed_seconds / 60.0
-    logger.info(
-        "DRIP candidate | user=%s | status=%s | gender=%s | reference=%s (%s) | "
-        "minutes_since=%.1f | stages(stalled=%s, tips=%s)",
-        snapshot.tg_id,
-        _normalize_status(snapshot.funnel_status) or "unknown",
-        snapshot.gender or "unknown",
-        _format_dt(activity_at),
-        snapshot.activity_source or "unknown",
-        elapsed_minutes,
-        snapshot.drip_stage_stalled,
-        snapshot.drip_stage_tips,
-    )
-
-    for cohort in _COHORTS:
-        eligible, eligibility_reason = _cohort_membership(snapshot, cohort)
-        stage_attr = "drip_stage_stalled" if cohort == "stalled" else "drip_stage_tips"
-        current_stage = int(getattr(snapshot, stage_attr, 0) or 0)
-
-        if not eligible:
-            logger.info(
-                "DRIP evaluation | user=%s | cohort=%s | decision=skip | reason=%s | "
-                "stage=%s | minutes_since=%.1f",
-                snapshot.tg_id,
-                cohort,
-                eligibility_reason,
-                current_stage,
-                elapsed_minutes,
-            )
-            continue
-
-        if current_stage >= 3:
-            logger.info(
-                "DRIP evaluation | user=%s | cohort=%s | decision=skip | "
-                "reason=completed_all_stages | stage=%s",
-                snapshot.tg_id,
-                cohort,
-                current_stage,
-            )
-            continue
-
-        stage_to_set = _determine_next_stage(current_stage, elapsed_minutes)
-        if not stage_to_set or stage_to_set <= current_stage:
-            logger.info(
-                "DRIP evaluation | user=%s | cohort=%s | decision=skip | "
-                "reason=below_threshold(%.1f<%s) | stage=%s",
-                snapshot.tg_id,
-                cohort,
-                elapsed_minutes,
-                _threshold_for_stage(current_stage + 1),
-                current_stage,
-            )
-            continue
-
-        decisions.append((cohort, stage_to_set, False))
-        guard_ok, guard_reason, guard_stage = await _ensure_stage_guard(
-            snapshot, cohort, stage_to_set
-        )
-        if not guard_ok:
-            logger.info(
-                "DRIP evaluation | user=%s | cohort=%s | stage_target=%s | "
-                "decision=skip | reason=%s | db_stage=%s",
-                snapshot.tg_id,
-                cohort,
-                stage_to_set,
-                guard_reason,
-                guard_stage,
-            )
-            continue
-
-        sent = await _send_followup(bot, snapshot, cohort, stage_to_set)
-        decisions[-1] = (cohort, stage_to_set, sent)
-        if sent:
-            setattr(snapshot, stage_attr, stage_to_set)
-        else:
-            logger.info(
-                "DRIP evaluation | user=%s | cohort=%s | stage_target=%s | "
-                "decision=skip | reason=send_failed",
-                snapshot.tg_id,
-                cohort,
-                stage_to_set,
-            )
-
-    return decisions
-
-
 class DripFollowupService:
-    """Периодический сканер пользователей для отправки кейсов."""
+    """Периодический воркер для DRIP-рассылок."""
 
     _task: asyncio.Task | None = None
     _stop_event: asyncio.Event | None = None
@@ -460,8 +298,7 @@ class DripFollowupService:
     @classmethod
     def start(cls, bot: Bot) -> None:
         logger.info(
-            "DRIP worker bootstrap | enabled=%s | pid=%s | already_running=%s | "
-            "interval_sec=%s | thresholds_min=(24h=%s, 48h=%s, 72h=%s)",
+            "DRIP worker bootstrap | enabled=%s | pid=%s | already_running=%s | interval_sec=%s | thresholds_min=(24h=%s, 48h=%s, 72h=%s)",
             ENABLE_DRIP_FOLLOWUPS,
             os.getpid(),
             cls.is_running(),
@@ -479,13 +316,10 @@ class DripFollowupService:
             logger.info("DRIP follow-up worker already running; skipping start")
             return
 
-        cls._stop_event = asyncio.Event()
         cls._bot = bot
+        cls._stop_event = asyncio.Event()
         cls._task = asyncio.create_task(cls._runner())
-        logger.info(
-            "DRIP worker started (interval=%ss)",
-            DRIP_CHECK_INTERVAL_SEC,
-        )
+        logger.info("DRIP worker started (interval=%ss)", DRIP_CHECK_INTERVAL_SEC)
 
     @classmethod
     def is_running(cls) -> bool:
@@ -503,7 +337,7 @@ class DripFollowupService:
         cls._task = None
         try:
             await task
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
             pass
         finally:
             cls._stop_event = None
@@ -514,6 +348,7 @@ class DripFollowupService:
     async def _runner(cls) -> None:
         assert cls._stop_event is not None
         iteration = 0
+
         try:
             while True:
                 if cls._stop_event.is_set():
@@ -521,49 +356,31 @@ class DripFollowupService:
 
                 bot = cls._bot
                 if not bot:
-                    logger.debug("DRIP worker has no bot instance; sleeping")
+                    logger.debug("DRIP worker idle: bot instance missing")
                 else:
                     iteration += 1
-                    iteration_started_at = datetime.utcnow()
+                    started_at = datetime.utcnow()
                     logger.info(
                         "DRIP scan start | iteration=%s | utc=%s",
                         iteration,
-                        _format_dt(iteration_started_at),
+                        _format_dt(started_at),
                     )
-                    stage_candidates: dict[tuple[str, int], int] = defaultdict(int)
-                    stage_sent: dict[tuple[str, int], int] = defaultdict(int)
+
                     try:
-                        snapshots, query_text = await _load_candidates()
-                        logger.info(
-                            "DRIP selection query | %s",
-                            query_text,
-                        )
+                        candidates, query_text = await _load_candidates()
+                        logger.info("DRIP selection query | %s", query_text)
                         logger.info(
                             "DRIP candidates loaded | count=%s",
-                            len(snapshots),
+                            len(candidates),
                         )
-                        for snapshot in snapshots:
-                            decisions = await _process_snapshot(bot, snapshot)
-                            for cohort, stage, sent in decisions:
-                                stage_candidates[(cohort, stage)] += 1
-                                if sent:
-                                    stage_sent[(cohort, stage)] += 1
+                        for candidate in candidates:
+                            await _process_candidate(bot, candidate)
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # noqa: BLE001
                         logger.exception("DRIP worker iteration failed: %s", exc)
                     else:
-                        for cohort in _COHORTS:
-                            for stage in (1, 2, 3):
-                                key = (cohort, stage)
-                                logger.info(
-                                    "DRIP stage stats | cohort=%s | stage=%s | ready=%s | sent=%s",
-                                    cohort,
-                                    _STAGE_LABELS.get(stage, stage),
-                                    stage_candidates.get(key, 0),
-                                    stage_sent.get(key, 0),
-                                )
-                        duration = datetime.utcnow() - iteration_started_at
+                        duration = datetime.utcnow() - started_at
                         logger.info(
                             "DRIP scan end | iteration=%s | duration=%.2fs",
                             iteration,
@@ -577,6 +394,6 @@ class DripFollowupService:
                     break
                 except asyncio.TimeoutError:
                     continue
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
             logger.debug("DRIP worker task cancelled")
             raise
