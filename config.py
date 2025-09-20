@@ -78,6 +78,23 @@ ENABLE_HOT_LEAD_ALERTS = _as_bool(os.getenv("ENABLE_HOT_LEAD_ALERTS"), True)
 ENABLE_STALLED_REMINDER = _as_bool(os.getenv("ENABLE_STALLED_REMINDER"), False)
 STALLED_REMINDER_DELAY_MIN = int(os.getenv("STALLED_REMINDER_DELAY_MIN", "120"))
 
+# Догоняющие кейсы по неактивности
+ENABLE_DRIP_FOLLOWUPS = _as_bool(os.getenv("ENABLE_DRIP_FOLLOWUPS"), False)
+
+_DRIP_INTERVAL = _int(
+    os.getenv("DRIP_CHECK_INTERVAL_SEC"), field_name="DRIP_CHECK_INTERVAL_SEC"
+)
+DRIP_CHECK_INTERVAL_SEC = _DRIP_INTERVAL if _DRIP_INTERVAL is not None else 600
+
+_DRIP_24 = _int(os.getenv("DRIP_24H_MIN"), field_name="DRIP_24H_MIN")
+DRIP_24H_MIN = _DRIP_24 if _DRIP_24 is not None else 1440
+
+_DRIP_48 = _int(os.getenv("DRIP_48H_MIN"), field_name="DRIP_48H_MIN")
+DRIP_48H_MIN = _DRIP_48 if _DRIP_48 is not None else 2880
+
+_DRIP_72 = _int(os.getenv("DRIP_72H_MIN"), field_name="DRIP_72H_MIN")
+DRIP_72H_MIN = _DRIP_72 if _DRIP_72 is not None else 4320
+
 _missing_required: list[str] = []
 if not TELEGRAM_BOT_TOKEN:
     _missing_required.append("TELEGRAM_BOT_TOKEN")
@@ -95,6 +112,23 @@ def validate_required_settings() -> None:
         + ". Please set them in your environment or .env file."
     )
     raise RuntimeError(message)
+
+
+def log_drip_configuration(target_logger: logging.Logger | None = None) -> None:
+    """Вывести в лог настройки догоняющих кейсов."""
+
+    active_logger = target_logger or logger
+    if not ENABLE_DRIP_FOLLOWUPS:
+        active_logger.info("DRIP: disabled (ENABLE_DRIP_FOLLOWUPS=%s)", ENABLE_DRIP_FOLLOWUPS)
+        return
+
+    active_logger.info(
+        "DRIP: enabled interval_sec=%s thresholds_min=(24h=%s, 48h=%s, 72h=%s)",
+        DRIP_CHECK_INTERVAL_SEC,
+        DRIP_24H_MIN,
+        DRIP_48H_MIN,
+        DRIP_72H_MIN,
+    )
 
 
 if ADMIN_CHAT_ID is None:

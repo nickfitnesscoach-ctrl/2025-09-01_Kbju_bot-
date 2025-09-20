@@ -35,6 +35,7 @@ async def set_user(tg_id: int, username: str | None = None, first_name: str | No
                     first_name=first_name,
                     funnel_status="new",
                     priority_score=0,
+                    last_activity_at=datetime.utcnow(),
                 )
             )
         else:
@@ -42,6 +43,7 @@ async def set_user(tg_id: int, username: str | None = None, first_name: str | No
                 user.username = username
             if first_name and user.first_name != first_name:
                 user.first_name = first_name
+            user.last_activity_at = datetime.utcnow()
             user.updated_at = datetime.utcnow()
 
         await session.commit()
@@ -138,6 +140,8 @@ async def update_user_data(tg_id: int, **kwargs: Any) -> User | None:
                 if hasattr(user, key):
                     setattr(user, key, value)
 
+            if "last_activity_at" not in kwargs:
+                user.last_activity_at = datetime.utcnow()
             user.updated_at = datetime.utcnow()
             await session.commit()
 
@@ -168,6 +172,7 @@ async def update_user_status(
                 user.first_name = first_name
             if priority_score is not None:
                 user.priority_score = priority_score
+            user.last_activity_at = datetime.utcnow()
             user.updated_at = datetime.utcnow()
 
             user_snapshot = {
@@ -212,6 +217,46 @@ async def update_user_status(
                     logger.warning("Failed to mark hot lead notification for user %s: %s", tg_id, exc)
 
     return updated_user
+
+
+async def update_last_activity(tg_id: int) -> bool:
+    """Обновить отметку последней активности пользователя."""
+
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            logger.debug("Cannot update last activity: user %s not found", tg_id)
+            return False
+
+        user.last_activity_at = datetime.utcnow()
+        user.updated_at = datetime.utcnow()
+        await session.commit()
+        return True
+
+
+async def update_drip_stage(tg_id: int, *, cohort: str, stage: int) -> bool:
+    """Сохранить прогресс отправки кейсов для указанной когорты."""
+
+    if cohort not in {"stalled", "tips"}:
+        raise ValueError(f"Unsupported cohort: {cohort}")
+
+    stage_value = max(0, min(3, int(stage)))
+    column_name = "drip_stage_stalled" if cohort == "stalled" else "drip_stage_tips"
+
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            logger.debug(
+                "Cannot update drip stage for cohort %s: user %s not found",
+                cohort,
+                tg_id,
+            )
+            return False
+
+        setattr(user, column_name, stage_value)
+        user.updated_at = datetime.utcnow()
+        await session.commit()
+        return True
 
 
 async def get_calculated_users_for_timer() -> list[User]:
