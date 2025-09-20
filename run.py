@@ -19,7 +19,9 @@ from config import (
     ADMIN_CHAT_ID,
     DEBUG,
     ENABLE_HOT_LEAD_ALERTS,
+    ENABLE_STALLED_REMINDER,
     N8N_WEBHOOK_URL,
+    STALLED_REMINDER_DELAY_MIN,
     TOKEN,
     validate_required_settings,
 )
@@ -49,6 +51,11 @@ def _log_startup_configuration(allowed_updates: Iterable[str]) -> None:
         masked_admin,
         POLLING_MODE,
         list(allowed_updates),
+    )
+    logger.info(
+        "STALLED: enabled=%s delay_min=%s",
+        ENABLE_STALLED_REMINDER,
+        STALLED_REMINDER_DELAY_MIN,
     )
 
 

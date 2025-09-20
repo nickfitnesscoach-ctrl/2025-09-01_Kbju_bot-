@@ -15,10 +15,12 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
-def _bool(value: str) -> bool:
-    """Конвертируем строку в boolean."""
+def _as_bool(value: str | None, default: bool = False) -> bool:
+    """Конвертировать строку в булево значение с поддержкой дефолта."""
 
-    return str(value).lower() in ("1", "true", "yes", "y", "on")
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _int(value: str | None, *, field_name: str | None = None) -> int | None:
@@ -63,17 +65,17 @@ N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
 N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "")
 
 # Проверка подписки на канал
-ENABLE_SUBSCRIPTION_GATE = os.getenv("ENABLE_SUBSCRIPTION_GATE", "true").lower() == "true"
+ENABLE_SUBSCRIPTION_GATE = _as_bool(os.getenv("ENABLE_SUBSCRIPTION_GATE"), True)
 CHANNEL_URL = os.getenv("CHANNEL_URL", "")
 CHANNEL_ID_OR_USERNAME = os.getenv("CHANNEL_ID_OR_USERNAME", "")
-ALLOW_GATE_FALLBACK_PASS = os.getenv("ALLOW_GATE_FALLBACK_PASS", "false").lower() == "true"
+ALLOW_GATE_FALLBACK_PASS = _as_bool(os.getenv("ALLOW_GATE_FALLBACK_PASS"), False)
 
 # Режим отладки
-DEBUG = _bool(os.getenv("DEBUG", "false"))
-ENABLE_HOT_LEAD_ALERTS = os.getenv("ENABLE_HOT_LEAD_ALERTS", "true").lower() == "true"
+DEBUG = _as_bool(os.getenv("DEBUG"), False)
+ENABLE_HOT_LEAD_ALERTS = _as_bool(os.getenv("ENABLE_HOT_LEAD_ALERTS"), True)
 
 # Напоминание пользователям, которые не завершили расчёт
-ENABLE_STALLED_REMINDER = _bool(os.getenv("ENABLE_STALLED_REMINDER", "true"))
+ENABLE_STALLED_REMINDER = _as_bool(os.getenv("ENABLE_STALLED_REMINDER"), False)
 STALLED_REMINDER_DELAY_MIN = int(os.getenv("STALLED_REMINDER_DELAY_MIN", "120"))
 
 _missing_required: list[str] = []
