@@ -300,6 +300,23 @@ async def start_funnel_timer(user_id: int) -> None:
     await TimerService.start_calculated_timer(user_id, delay_minutes=DEFAULT_CALCULATED_TIMER_DELAY)
 
 
+async def _restart_stalled_reminder(user_id: int) -> None:
+    """Перезапустить напоминание о незавершённой анкете."""
+    try:
+        TimerService.cancel_stalled_timer(user_id)
+        await TimerService.start_stalled_timer(user_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to restart stalled reminder for user %s: %s", user_id, exc)
+
+
+def _cancel_stalled_reminder(user_id: int) -> None:
+    """Отменить напоминание о незавершённой анкете."""
+    try:
+        TimerService.cancel_stalled_timer(user_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to cancel stalled reminder for user %s: %s", user_id, exc)
+
+
 _delayed_offer_tasks: dict[int, asyncio.Task] = {}
 
 
@@ -1026,12 +1043,14 @@ async def _start_kbju_flow_inner(callback: CallbackQuery) -> None:
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         pass
+    _cancel_stalled_reminder(callback.from_user.id)
 
     await callback.message.edit_text(
         get_text("kbju_start"),
         reply_markup=gender_keyboard(),
         parse_mode="HTML",
     )
+    await _restart_stalled_reminder(callback.from_user.id)
 
 
 @user.callback_query(F.data == "start_kbju")
@@ -1065,6 +1084,21 @@ async def subscription_gate_check(callback: CallbackQuery, state: FSMContext):
     )
 
 
+@user.callback_query(F.data == "resume_calc")
+@rate_limit
+@error_handler
+async def resume_calculation(callback: CallbackQuery, state: FSMContext):
+    """Обработчик напоминания для продолжения расчёта."""
+    if not (callback.from_user and callback.message):
+        return
+
+    user_id = callback.from_user.id
+    _cancel_stalled_reminder(user_id)
+    await state.clear()
+    await _start_kbju_flow_inner(callback)
+    await callback.answer()
+
+
 @user.callback_query(F.data.startswith("gender_"))
 @rate_limit
 @error_handler
@@ -1080,6 +1114,7 @@ async def process_gender(callback: CallbackQuery, state: FSMContext):
 
         await callback.message.edit_text(get_text("questions.age"), parse_mode="HTML")
         await state.set_state(KBJUStates.waiting_age)
+        await _restart_stalled_reminder(callback.from_user.id)
         await callback.answer()
     except Exception as e:
         logger.exception("Gender processing error: %s", e)
@@ -1100,6 +1135,7 @@ async def process_age(message: Message, state: FSMContext):
             await state.update_data(age=age)
             await message.answer(get_text("questions.weight", age=age), parse_mode="HTML")
             await state.set_state(KBJUStates.waiting_weight)
+            await _restart_stalled_reminder(message.from_user.id)
         else:
             await message.answer(get_text("errors.age_range"), parse_mode="HTML")
     except (ValueError, TypeError):
@@ -1120,6 +1156,7 @@ async def process_weight(message: Message, state: FSMContext):
             await state.update_data(weight=weight)
             await message.answer(get_text("questions.height", weight=weight), parse_mode="HTML")
             await state.set_state(KBJUStates.waiting_height)
+            await _restart_stalled_reminder(message.from_user.id)
         else:
             await message.answer(get_text("errors.weight_range"), parse_mode="HTML")
     except (ValueError, TypeError):
@@ -1143,6 +1180,7 @@ async def process_height(message: Message, state: FSMContext):
                 reply_markup=activity_keyboard(),
                 parse_mode="HTML",
             )
+            await _restart_stalled_reminder(message.from_user.id)
         else:
             await message.answer(get_text("errors.height_range"), parse_mode="HTML")
     except (ValueError, TypeError):
@@ -1166,6 +1204,7 @@ async def process_activity(callback: CallbackQuery, state: FSMContext):
         reply_markup=goal_keyboard(),
         parse_mode="HTML",
     )
+    await _restart_stalled_reminder(callback.from_user.id)
     await callback.answer()
 
 
@@ -1184,7 +1223,8 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
 
         # Рассчитываем КБЖУ и сохраняем данные пользователя
         kbju = await calculate_and_save_kbju(callback.from_user.id, data)
-        
+        _cancel_stalled_reminder(callback.from_user.id)
+
         # Запускаем таймер для воронки
         asyncio.create_task(start_funnel_timer(callback.from_user.id))
         
@@ -1230,6 +1270,7 @@ async def process_delayed_yes(callback: CallbackQuery):
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         pass
+    _cancel_stalled_reminder(callback.from_user.id)
 
     await callback.message.edit_text(get_text("hot_lead_priorities"), reply_markup=priority_keyboard(), parse_mode="HTML")
     await callback.answer()
@@ -1243,6 +1284,7 @@ async def process_delayed_no(callback: CallbackQuery):
     if not (callback.from_user and callback.message):
         return
 
+    _cancel_stalled_reminder(callback.from_user.id)
     await update_user_status(
         tg_id=callback.from_user.id,
         status=FUNNEL_STATUSES["coldlead_delayed"],
@@ -1280,6 +1322,7 @@ async def process_lead_request(callback: CallbackQuery):
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         logger.debug("Failed to cancel timer for user %s", callback.from_user.id, exc_info=True)
+    _cancel_stalled_reminder(callback.from_user.id)
 
     try:
         cancel_delayed_offer(callback.from_user.id)
@@ -1351,6 +1394,7 @@ async def process_cold_lead(callback: CallbackQuery):
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         pass
+    _cancel_stalled_reminder(callback.from_user.id)
 
     await update_user_status(
         tg_id=callback.from_user.id,
