@@ -11,7 +11,7 @@ import html
 import logging
 from datetime import datetime, timedelta
 from functools import wraps
-from typing import Any
+from typing import Any, Callable
 
 from aiogram import F, Router
 from aiogram.exceptions import (
@@ -184,6 +184,53 @@ async def safe_db_operation(operation, *args, **kwargs):
         return False
 
 
+async def _touch_user_activity(user_id: int, *, source: str) -> None:
+    """Обновить отметку активности и залогировать результат."""
+
+    result = await safe_db_operation(update_last_activity, user_id)
+    if result:
+        logger.debug("Last activity updated for user %s via %s", user_id, source)
+    else:
+        logger.debug("Last activity update skipped for user %s via %s", user_id, source)
+
+
+def _extract_user_id(args: tuple[Any, ...], kwargs: dict[str, Any]) -> int | None:
+    for value in (*args, *kwargs.values()):
+        if isinstance(value, CallbackQuery) and value.from_user:
+            return value.from_user.id
+        if isinstance(value, Message) and value.from_user:
+            return value.from_user.id
+    return None
+
+
+def track_user_activity(source: str) -> Callable:
+    """Декоратор для автоматического обновления last_activity_at."""
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            user_id = _extract_user_id(args, kwargs)
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                if user_id:
+                    try:
+                        await _touch_user_activity(user_id, source=source)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to update last activity for user %s via %s: %s",
+                            user_id,
+                            source,
+                            exc,
+                        )
+
+        return wrapper
+
+    return decorator
+
+
 def get_advice_by_goal(goal: str) -> str:
     """Советы по ключу цели (weight_loss/maintenance/weight_gain)."""
     return get_text(f"advice.{goal}")
@@ -308,8 +355,6 @@ async def _restart_stalled_reminder(user_id: int) -> None:
         await TimerService.start_stalled_timer(user_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to restart stalled reminder for user %s: %s", user_id, exc)
-    finally:
-        await safe_db_operation(update_last_activity, user_id)
 
 
 async def _cancel_stalled_reminder(user_id: int) -> None:
@@ -318,8 +363,6 @@ async def _cancel_stalled_reminder(user_id: int) -> None:
         TimerService.cancel_stalled_timer(user_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to cancel stalled reminder for user %s: %s", user_id, exc)
-    finally:
-        await safe_db_operation(update_last_activity, user_id)
 
 
 _delayed_offer_tasks: dict[int, asyncio.Task] = {}
@@ -945,6 +988,7 @@ async def lead_delete_confirm(callback: CallbackQuery) -> None:
 @user.message(CommandStart(), F.chat.type == "private")
 @rate_limit
 @error_handler
+@track_user_activity("cmd_start")
 async def cmd_start(message: Message):
     """Команда /start — создаём пользователя (если нужно) и показываем приветствие."""
     logger.debug("/start entered for user %s in chat %s", message.from_user.id if message.from_user else "unknown", message.chat.id if message.chat else "unknown")
@@ -1061,6 +1105,7 @@ async def _start_kbju_flow_inner(callback: CallbackQuery) -> None:
 @user.callback_query(F.data == "start_kbju")
 @rate_limit
 @error_handler
+@track_user_activity("start_kbju_flow")
 async def start_kbju_flow(callback: CallbackQuery, state: FSMContext):
     """Старт сценария расчёта КБЖУ."""
     if not (callback.from_user and callback.message):
@@ -1092,6 +1137,7 @@ async def subscription_gate_check(callback: CallbackQuery, state: FSMContext):
 @user.callback_query(F.data == "resume_calc")
 @rate_limit
 @error_handler
+@track_user_activity("resume_calculation")
 async def resume_calculation(callback: CallbackQuery, state: FSMContext):
     """Обработчик напоминания для продолжения расчёта."""
     if not (callback.from_user and callback.message):
@@ -1107,6 +1153,7 @@ async def resume_calculation(callback: CallbackQuery, state: FSMContext):
 @user.callback_query(F.data.startswith("gender_"))
 @rate_limit
 @error_handler
+@track_user_activity("process_gender")
 async def process_gender(callback: CallbackQuery, state: FSMContext):
     if not (callback.from_user and callback.message and callback.data):
         return
@@ -1129,6 +1176,7 @@ async def process_gender(callback: CallbackQuery, state: FSMContext):
 @user.message(KBJUStates.waiting_age)
 @rate_limit
 @error_handler
+@track_user_activity("process_age")
 async def process_age(message: Message, state: FSMContext):
     if not (message.from_user and message.text):
         return
@@ -1150,6 +1198,7 @@ async def process_age(message: Message, state: FSMContext):
 @user.message(KBJUStates.waiting_weight)
 @rate_limit
 @error_handler
+@track_user_activity("process_weight")
 async def process_weight(message: Message, state: FSMContext):
     if not (message.from_user and message.text):
         return
@@ -1171,6 +1220,7 @@ async def process_weight(message: Message, state: FSMContext):
 @user.message(KBJUStates.waiting_height)
 @rate_limit
 @error_handler
+@track_user_activity("process_height")
 async def process_height(message: Message, state: FSMContext):
     if not (message.from_user and message.text):
         return
@@ -1195,6 +1245,7 @@ async def process_height(message: Message, state: FSMContext):
 @user.callback_query(F.data.startswith("activity_"))
 @rate_limit
 @error_handler
+@track_user_activity("process_activity")
 async def process_activity(callback: CallbackQuery, state: FSMContext):
     if not (callback.from_user and callback.message and callback.data):
         return
@@ -1216,6 +1267,7 @@ async def process_activity(callback: CallbackQuery, state: FSMContext):
 @user.callback_query(F.data.startswith("goal_"))
 @rate_limit
 @error_handler
+@track_user_activity("process_goal")
 async def process_goal(callback: CallbackQuery, state: FSMContext):
     """Финал — считаем КБЖУ, показываем результат, ставим таймер, отправляем вебхук и отложенное предложение."""
     if not (callback.from_user and callback.message and callback.data):
@@ -1266,6 +1318,7 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
 @user.callback_query(F.data == "delayed_yes")
 @rate_limit
 @error_handler
+@track_user_activity("process_delayed_yes")
 async def process_delayed_yes(callback: CallbackQuery):
     """Пользователь готов — выбираем приоритет."""
     if not (callback.from_user and callback.message):
@@ -1284,6 +1337,7 @@ async def process_delayed_yes(callback: CallbackQuery):
 @user.callback_query(F.data == "delayed_no")
 @rate_limit
 @error_handler
+@track_user_activity("process_delayed_no")
 async def process_delayed_no(callback: CallbackQuery):
     """Пользователь хочет советы — холодный лид (delayed)."""
     if not (callback.from_user and callback.message):
@@ -1313,6 +1367,7 @@ async def process_delayed_no(callback: CallbackQuery):
 @user.callback_query(F.data == "send_lead")
 @rate_limit
 @error_handler
+@track_user_activity("process_lead_request")
 async def process_lead_request(callback: CallbackQuery):
     """Оставить заявку (горячий лид)."""
     if not (callback.from_user and callback.message):
@@ -1371,6 +1426,7 @@ async def process_lead_request(callback: CallbackQuery):
 @user.callback_query(F.data.startswith("priority_"))
 @rate_limit
 @error_handler
+@track_user_activity("process_priority")
 async def process_priority(callback: CallbackQuery):
     """Выбор приоритета → оффер консультации."""
     if not (callback.from_user and callback.message and callback.data):
@@ -1390,6 +1446,7 @@ async def process_priority(callback: CallbackQuery):
 @user.callback_query(F.data == "funnel_cold")
 @rate_limit
 @error_handler
+@track_user_activity("process_cold_lead")
 async def process_cold_lead(callback: CallbackQuery):
     """Ручной переход в холодные лиды (получить советы)."""
     if not (callback.from_user and callback.message):

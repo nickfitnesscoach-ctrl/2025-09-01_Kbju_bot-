@@ -114,16 +114,26 @@ def validate_required_settings() -> None:
     raise RuntimeError(message)
 
 
-def log_drip_configuration(target_logger: logging.Logger | None = None) -> None:
+def log_drip_configuration(
+    target_logger: logging.Logger | None = None,
+    *,
+    worker_running: bool | None = None,
+) -> None:
     """Вывести в лог настройки догоняющих кейсов."""
 
     active_logger = target_logger or logger
-    if not ENABLE_DRIP_FOLLOWUPS:
-        active_logger.info("DRIP: disabled (ENABLE_DRIP_FOLLOWUPS=%s)", ENABLE_DRIP_FOLLOWUPS)
-        return
+    worker_state = (
+        "running" if worker_running else "stopped"
+        if worker_running is not None
+        else "unknown"
+    )
 
     active_logger.info(
-        "DRIP: enabled interval_sec=%s thresholds_min=(24h=%s, 48h=%s, 72h=%s)",
+        "DRIP: enabled=%s | pid=%s | worker_state=%s | interval_sec=%s | "
+        "thresholds_min=(24h=%s, 48h=%s, 72h=%s)",
+        ENABLE_DRIP_FOLLOWUPS,
+        os.getpid(),
+        worker_state,
         DRIP_CHECK_INTERVAL_SEC,
         DRIP_24H_MIN,
         DRIP_48H_MIN,

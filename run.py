@@ -59,7 +59,7 @@ def _log_startup_configuration(allowed_updates: Iterable[str]) -> None:
         ENABLE_STALLED_REMINDER,
         STALLED_REMINDER_DELAY_MIN,
     )
-    log_drip_configuration(logger)
+    log_drip_configuration(logger, worker_running=DripFollowupService.is_running())
 
 
 async def _configure_bot_commands(bot: Bot) -> None:
