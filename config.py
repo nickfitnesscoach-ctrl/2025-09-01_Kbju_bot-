@@ -62,8 +62,11 @@ DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///data/db.sqlite3")
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
 N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "")
 
-# URL канала
+# Проверка подписки на канал
+ENABLE_SUBSCRIPTION_GATE = os.getenv("ENABLE_SUBSCRIPTION_GATE", "true").lower() == "true"
 CHANNEL_URL = os.getenv("CHANNEL_URL", "")
+CHANNEL_ID_OR_USERNAME = os.getenv("CHANNEL_ID_OR_USERNAME", "")
+ALLOW_GATE_FALLBACK_PASS = os.getenv("ALLOW_GATE_FALLBACK_PASS", "false").lower() == "true"
 
 # Режим отладки
 DEBUG = _bool(os.getenv("DEBUG", "false"))

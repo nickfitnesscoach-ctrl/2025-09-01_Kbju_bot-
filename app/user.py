@@ -51,6 +51,7 @@ from app.database.requests import (
     update_user_data,
     update_user_status,
 )
+from app.features import CHECK_CALLBACK_DATA, ensure_subscription_and_continue
 from app.keyboards import (
     main_menu,
     gender_keyboard,
@@ -1017,11 +1018,7 @@ async def show_profile(callback: CallbackQuery):
         await callback.answer()
 
 
-@user.callback_query(F.data == "start_kbju")
-@rate_limit
-@error_handler
-async def start_kbju_flow(callback: CallbackQuery, state: FSMContext):
-    """Старт сценария расчёта КБЖУ."""
+async def _start_kbju_flow_inner(callback: CallbackQuery) -> None:
     if not (callback.from_user and callback.message):
         return
 
@@ -1030,8 +1027,42 @@ async def start_kbju_flow(callback: CallbackQuery, state: FSMContext):
     except Exception:
         pass
 
-    await callback.message.edit_text(get_text("kbju_start"), reply_markup=gender_keyboard(), parse_mode="HTML")
-    await callback.answer()
+    await callback.message.edit_text(
+        get_text("kbju_start"),
+        reply_markup=gender_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@user.callback_query(F.data == "start_kbju")
+@rate_limit
+@error_handler
+async def start_kbju_flow(callback: CallbackQuery, state: FSMContext):
+    """Старт сценария расчёта КБЖУ."""
+    if not (callback.from_user and callback.message):
+        return
+
+    await ensure_subscription_and_continue(
+        callback.bot,
+        callback.from_user.id,
+        callback,
+        on_success=lambda: _start_kbju_flow_inner(callback),
+    )
+
+
+@user.callback_query(F.data == CHECK_CALLBACK_DATA)
+@rate_limit
+@error_handler
+async def subscription_gate_check(callback: CallbackQuery, state: FSMContext):
+    if not (callback.from_user and callback.message):
+        return
+
+    await ensure_subscription_and_continue(
+        callback.bot,
+        callback.from_user.id,
+        callback,
+        on_success=lambda: _start_kbju_flow_inner(callback),
+    )
 
 
 @user.callback_query(F.data.startswith("gender_"))
