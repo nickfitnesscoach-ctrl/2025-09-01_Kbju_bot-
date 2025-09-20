@@ -56,10 +56,7 @@ class User(Base):
 
     # Признаки активности и прогресса drip-воронки
     last_activity_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    drip_stage_stalled: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False, server_default=text("0")
-    )
-    drip_stage_tips: Mapped[int] = mapped_column(
+    drip_stage: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, server_default=text("0")
     )
 
@@ -120,24 +117,13 @@ def _ensure_additional_user_columns(sync_conn) -> None:
         "Adding users.last_activity_at column for drip follow-ups",
     )
     _ensure_column(
-        "drip_stage_stalled",
+        "drip_stage",
         Column(
-            "drip_stage_stalled",
+            "drip_stage",
             Integer,
             nullable=False,
             server_default=text("0"),
         ),
-        "ALTER TABLE users ADD COLUMN drip_stage_stalled INTEGER NOT NULL DEFAULT 0",
-        "Adding users.drip_stage_stalled column for drip follow-ups",
-    )
-    _ensure_column(
-        "drip_stage_tips",
-        Column(
-            "drip_stage_tips",
-            Integer,
-            nullable=False,
-            server_default=text("0"),
-        ),
-        "ALTER TABLE users ADD COLUMN drip_stage_tips INTEGER NOT NULL DEFAULT 0",
-        "Adding users.drip_stage_tips column for drip follow-ups",
+        "ALTER TABLE users ADD COLUMN drip_stage INTEGER NOT NULL DEFAULT 0",
+        "Adding users.drip_stage column for drip follow-ups",
     )

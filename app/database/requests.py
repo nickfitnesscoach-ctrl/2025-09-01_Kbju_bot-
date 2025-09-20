@@ -6,13 +6,12 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 
 from app.database.models import User, async_session
 from utils.notifications import notify_lead_card, notify_new_hot_lead
 from config import ENABLE_HOT_LEAD_ALERTS
-
 
 logger = logging.getLogger(__name__)
 
@@ -234,40 +233,49 @@ async def update_last_activity(tg_id: int) -> bool:
         return True
 
 
-async def update_drip_stage(tg_id: int, *, cohort: str, stage: int) -> bool:
-    """Сохранить прогресс отправки кейсов для указанной когорты."""
+async def update_drip_stage(tg_id: int, *, from_stage: int, to_stage: int) -> bool:
+    """Атомарно повысить стадию DRIP-рассылки для пользователя."""
 
-    if cohort not in {"stalled", "tips"}:
-        raise ValueError(f"Unsupported cohort: {cohort}")
+    current_stage = max(0, min(3, int(from_stage)))
+    target_stage = max(0, min(3, int(to_stage)))
 
-    stage_value = max(0, min(3, int(stage)))
-    column_name = "drip_stage_stalled" if cohort == "stalled" else "drip_stage_tips"
+    if target_stage <= current_stage:
+        logger.debug(
+            "DRIP stage transition ignored for user %s: from=%s to=%s",
+            tg_id,
+            current_stage,
+            target_stage,
+        )
+        return False
+
+    if target_stage - current_stage != 1:
+        logger.debug(
+            "DRIP stage transition must be sequential for user %s: from=%s to=%s",
+            tg_id,
+            current_stage,
+            target_stage,
+        )
+        return False
 
     async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        if not user:
-            logger.debug(
-                "Cannot update drip stage for cohort %s: user %s not found",
-                cohort,
-                tg_id,
-            )
-            return False
+        stmt = (
+            update(User)
+            .where(User.tg_id == tg_id, User.drip_stage == current_stage)
+            .values(drip_stage=target_stage, updated_at=datetime.utcnow())
+        )
+        result = await session.execute(stmt)
+        updated = bool(getattr(result, "rowcount", 0))
 
-        current_stage = int(getattr(user, column_name, 0) or 0)
-        if current_stage >= stage_value:
-            logger.debug(
-                "DRIP stage not updated for user %s (cohort=%s): current=%s target=%s",
-                tg_id,
-                cohort,
-                current_stage,
-                stage_value,
-            )
-            return False
+        if updated:
+            await session.commit()
+            return True
 
-        setattr(user, column_name, stage_value)
-        user.updated_at = datetime.utcnow()
-        await session.commit()
-        return True
+        await session.rollback()
+        logger.debug(
+            "DRIP stage transition skipped for user %s: current stage mismatch",
+            tg_id,
+        )
+        return False
 
 
 async def get_calculated_users_for_timer() -> list[User]:
