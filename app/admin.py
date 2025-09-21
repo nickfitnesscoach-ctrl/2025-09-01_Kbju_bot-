@@ -476,11 +476,19 @@ async def admin_photo_id(message: Message) -> None:
         return
 
     reply = message.reply_to_message
-    if not reply or not reply.photo:
-        await message.answer("Эта команда работает в ответ на сообщение с фото")
+    file_id: str | None = None
+
+    if reply:
+        if reply.photo:
+            file_id = reply.photo[-1].file_id
+        elif reply.video:
+            file_id = reply.video.file_id
+
+    if not file_id:
+        await message.answer("Эта команда работает в ответ на сообщение с фото или видео")
         return
 
-    await message.answer(f"file_id: {reply.photo[-1].file_id}")
+    await message.answer(f"file_id: {file_id}")
 
 
 @admin.message(F.photo)
@@ -501,3 +509,15 @@ async def admin_receive_photo(message: Message) -> None:
     except Exception as exc:
         logger.error("Failed to save coach photo file_id: %s", exc)
         await message.answer("Не удалось сохранить file_id, попробуйте позже.")
+
+
+@admin.message(F.video)
+async def admin_receive_video(message: Message) -> None:
+    """Ответить администратору file_id присланного видео."""
+    if not _is_authorized_admin(message):
+        await message.answer("Недостаточно прав")
+        return
+
+    file_id = message.video.file_id
+
+    await message.answer(f"file_id: {file_id}")
