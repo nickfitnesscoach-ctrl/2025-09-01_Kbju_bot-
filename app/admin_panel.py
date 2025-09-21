@@ -5,13 +5,18 @@ import logging
 import os
 import secrets
 from functools import wraps
+from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import check_password_hash, generate_password_hash
 
-load_dotenv()
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent
+
+for env_path in (PROJECT_ROOT / ".env", CURRENT_DIR / ".env"):
+    load_dotenv(env_path, override=False)
 
 logger = logging.getLogger(__name__)
 
@@ -143,13 +148,6 @@ def save_text():
     is_message = request.form.get("is_message") == "1"
     photo_file_id = request.form.get("photo_file_id", "").strip()
     video_file_id = request.form.get("video_file_id", "").strip()
-    password = request.form.get("password", "")
-
-    if not _verify_password(password):
-        logger.info("Rejected save attempt for %s due to invalid password", text_key)
-        flash("Неверный пароль для сохранения", "error")
-        return redirect(url_for("edit_text", text_key=text_key))
-
     texts = load_texts()
     keys = text_key.split(".")
     current = texts
