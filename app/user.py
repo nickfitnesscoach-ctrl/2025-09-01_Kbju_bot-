@@ -210,6 +210,7 @@ async def handle_private_chat_member_update(event: ChatMemberUpdated) -> None:
         return
 
     lead_id = lead_user.id
+    should_delete_lead = new_status == ChatMemberStatus.KICKED
 
     db_user = await safe_db_operation(get_user, lead_id)
     if db_user is False:
@@ -238,6 +239,13 @@ async def handle_private_chat_member_update(event: ChatMemberUpdated) -> None:
         logger.info("Sent leave notification for user %s", lead_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to send leave notification for user %s: %s", lead_id, exc)
+
+    if should_delete_lead:
+        delete_result = await safe_db_operation(delete_user_by_tg_id, lead_id)
+        if delete_result:
+            logger.info("Deleted lead %s after bot block", lead_id)
+        else:
+            logger.warning("Failed to delete lead %s after bot block", lead_id)
 
 
 def _extract_user_id(args: tuple[Any, ...], kwargs: dict[str, Any]) -> int | None:
