@@ -11,6 +11,10 @@ USER_REQUESTS_WINDOW = 60  # seconds
 DEFAULT_CALCULATED_TIMER_DELAY = 60  # minutes
 DELAYED_OFFER_DELAY = 3  # seconds
 
+# Админ-лист лидов
+LEADS_PAGE_SIZE = 10
+LEADS_DEFAULT_WINDOW = "all"
+
 # Приоритеты лидов
 PRIORITY_SCORES = {
     'consultation_request': 100,  # Максимальный приоритет для заявок на консультацию
