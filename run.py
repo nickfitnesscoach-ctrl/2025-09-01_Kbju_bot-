@@ -65,7 +65,7 @@ def _log_startup_configuration(allowed_updates: Iterable[str]) -> None:
 async def _configure_bot_commands(bot: Bot) -> None:
     private_commands = [
         BotCommand(command="start", description="Начать работу"),
-        BotCommand(command="ping", description="Проверка подключения"),
+        BotCommand(command="contact_author", description="Связь с автором"),
     ]
 
     try:
