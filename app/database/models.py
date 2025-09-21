@@ -1,7 +1,16 @@
 from datetime import datetime
 import logging
 
-from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, String, inspect, text
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    Float,
+    Integer,
+    String,
+    inspect,
+    text,
+)
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.exc import SQLAlchemyError
@@ -12,6 +21,7 @@ except ImportError:  # pragma: no cover - fallback для SQLAlchemy 2.0+
     AddColumn = None  # type: ignore[assignment]
 
 from config import DB_URL, DEBUG
+from app.database.migrations import migrate_drop_drip_columns
 
 engine = create_async_engine(url=DB_URL,
                              echo=DEBUG)
@@ -66,29 +76,103 @@ class User(Base):
     calculated_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)  # для таймера
 
 
+_REQUIRED_USER_COLUMNS: set[str] = {
+    "id",
+    "tg_id",
+    "username",
+    "first_name",
+    "gender",
+    "age",
+    "weight",
+    "height",
+    "activity",
+    "goal",
+    "calories",
+    "proteins",
+    "fats",
+    "carbs",
+    "funnel_status",
+    "priority",
+    "priority_score",
+    "created_at",
+    "updated_at",
+    "calculated_at",
+    "hot_lead_notified_at",
+    "last_activity_at",
+    "drip_stage",
+}
+
+_COLUMN_FALLBACKS: dict[str, tuple[Column, str]] = {
+    "hot_lead_notified_at": (
+        Column("hot_lead_notified_at", DateTime, nullable=True),
+        "ALTER TABLE users ADD COLUMN hot_lead_notified_at DATETIME",
+    ),
+    "last_activity_at": (
+        Column("last_activity_at", DateTime, nullable=True),
+        "ALTER TABLE users ADD COLUMN last_activity_at DATETIME",
+    ),
+    "drip_stage": (
+        Column(
+            "drip_stage",
+            Integer,
+            nullable=False,
+            server_default=text("0"),
+        ),
+        "ALTER TABLE users ADD COLUMN drip_stage INTEGER NOT NULL DEFAULT 0",
+    ),
+    "updated_at": (
+        Column("updated_at", DateTime, nullable=True),
+        "ALTER TABLE users ADD COLUMN updated_at DATETIME",
+    ),
+    "calculated_at": (
+        Column("calculated_at", DateTime, nullable=True),
+        "ALTER TABLE users ADD COLUMN calculated_at DATETIME",
+    ),
+}
+
+
 async def async_main():
+    migrate_drop_drip_columns(DB_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_ensure_additional_user_columns)
+        await conn.run_sync(_ensure_user_schema)
 
 
-def _ensure_additional_user_columns(sync_conn) -> None:
-    """Гарантировать наличие дополнительных колонок в таблице users."""
+def _ensure_user_schema(sync_conn) -> None:
+    """Проверить и восстановить схему таблицы ``users``."""
 
     inspector = inspect(sync_conn)
-    existing = {column["name"] for column in inspector.get_columns(User.__tablename__)}
+    existing = {
+        column["name"] for column in inspector.get_columns(User.__tablename__)
+    }
 
-    def _ensure_column(
-        column_name: str,
-        column: Column,
-        fallback_sql: str,
-        log_message: str,
-    ) -> None:
-        if column_name in existing:
-            logger.debug("users.%s already exists", column_name)
-            return
+    logger.info("[schema] users: existing columns -> %s", sorted(existing))
 
-        logger.info(log_message)
+    missing = _REQUIRED_USER_COLUMNS - existing
+    unexpected = existing - _REQUIRED_USER_COLUMNS
+
+    if unexpected:
+        logger.warning(
+            "[schema] users: unexpected columns detected -> %s", sorted(unexpected)
+        )
+
+    if not missing:
+        logger.info("OK: users has all required columns")
+    else:
+        logger.warning(
+            "[schema] users: missing columns -> %s | applying ensure_columns fallback",
+            sorted(missing),
+        )
+
+    for column_name in sorted(missing):
+        column_spec = _COLUMN_FALLBACKS.get(column_name)
+        if column_spec is None:
+            raise RuntimeError(
+                f"users column {column_name} is missing and no fallback DDL is defined"
+            )
+
+        column, fallback_sql = column_spec
+        logger.info("[schema] users: adding column %s", column_name)
 
         try:
             if AddColumn is not None:
@@ -99,31 +183,31 @@ def _ensure_additional_user_columns(sync_conn) -> None:
         except SQLAlchemyError as exc:  # pragma: no cover - defensive logging
             logger.exception("Failed to add users.%s column: %s", column_name, exc)
             refreshed = {
-                col["name"] for col in inspector.get_columns(User.__tablename__)
+                col["name"] for col in inspect(sync_conn).get_columns(User.__tablename__)
             }
             if column_name not in refreshed:
                 raise
 
-    _ensure_column(
-        "hot_lead_notified_at",
-        Column("hot_lead_notified_at", DateTime, nullable=True),
-        "ALTER TABLE users ADD COLUMN hot_lead_notified_at DATETIME",
-        "Adding users.hot_lead_notified_at column for hot lead notifications",
+    refreshed_inspector = inspect(sync_conn)
+    final_columns = {
+        column["name"] for column in refreshed_inspector.get_columns(User.__tablename__)
+    }
+
+    missing_after = _REQUIRED_USER_COLUMNS - final_columns
+    if missing_after:
+        raise RuntimeError(
+            "users schema mismatch after ensure_columns: missing "
+            + ", ".join(sorted(missing_after))
+        )
+
+    unique_constraints = refreshed_inspector.get_unique_constraints(User.__tablename__)
+    has_unique_tg = any(
+        constraint.get("column_names") == ["tg_id"] for constraint in unique_constraints
     )
-    _ensure_column(
-        "last_activity_at",
-        Column("last_activity_at", DateTime, nullable=True),
-        "ALTER TABLE users ADD COLUMN last_activity_at DATETIME",
-        "Adding users.last_activity_at column for drip follow-ups",
-    )
-    _ensure_column(
-        "drip_stage",
-        Column(
-            "drip_stage",
-            Integer,
-            nullable=False,
-            server_default=text("0"),
-        ),
-        "ALTER TABLE users ADD COLUMN drip_stage INTEGER NOT NULL DEFAULT 0",
-        "Adding users.drip_stage column for drip follow-ups",
-    )
+    if not has_unique_tg:
+        logger.info("[schema] users: creating unique index on tg_id")
+        sync_conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_tg_id ON users (tg_id)")
+        )
+
+    logger.info("[schema] users: final columns -> %s", sorted(final_columns))
