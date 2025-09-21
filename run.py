@@ -30,7 +30,7 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_UPDATES: tuple[str, ...] = ("message", "callback_query")
+ALLOWED_UPDATES: tuple[str, ...] = ("message", "callback_query", "my_chat_member")
 POLLING_MODE = "polling"
 
 

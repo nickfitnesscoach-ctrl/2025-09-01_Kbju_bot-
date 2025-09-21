@@ -55,7 +55,11 @@ def _format_calories(calories: Any) -> str:
         return str(calories)
 
 
-def build_lead_card(user: Mapping[str, Any] | Any) -> Tuple[str, dict]:
+def build_lead_card(
+    user: Mapping[str, Any] | Any,
+    *,
+    title: str = "Новый лид",
+) -> Tuple[str, dict]:
     """Сформировать текст и клавиатуру карточки лида для уведомления админу."""
 
     tg_id = _value_from_user(user, "tg_id")
@@ -78,8 +82,10 @@ def build_lead_card(user: Mapping[str, Any] | Any) -> Tuple[str, dict]:
     username_line = f"💬 @{html.escape(username_raw)}\n" if username_raw else ""
     mention_link = f'<a href="tg://user?id={tg_id_int}">Открыть профиль</a>'
 
+    safe_title = html.escape(str(title))
+
     text = (
-        "<b>Новый лид</b>\n"
+        f"<b>{safe_title}</b>\n"
         f"👤 {safe_name}\n"
         f"🆔 <code>{tg_id_int}</code>\n"
         f"🎯 Цель: {html.escape(goal)}\n"
@@ -177,11 +183,15 @@ async def notify_new_hot_lead(user: Mapping[str, Any] | Any) -> bool:
         return False
 
 
-async def notify_lead_card(user: Mapping[str, Any] | Any) -> None:
+async def notify_lead_card(
+    user: Mapping[str, Any] | Any,
+    *,
+    title: str | None = None,
+) -> None:
     """Собрать карточку лида и отправить админу."""
 
     try:
-        text, markup = build_lead_card(user)
+        text, markup = build_lead_card(user, title=title or "Новый лид")
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to build lead card: %s", exc)
         return

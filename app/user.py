@@ -14,6 +14,7 @@ from functools import wraps
 from typing import Any, Callable
 
 from aiogram import F, Router
+from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import (
     TelegramBadRequest,
     TelegramForbiddenError,
@@ -24,6 +25,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
+    ChatMemberUpdated,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -192,6 +194,50 @@ async def _touch_user_activity(user_id: int, *, source: str) -> None:
         logger.debug("Last activity updated for user %s via %s", user_id, source)
     else:
         logger.debug("Last activity update skipped for user %s via %s", user_id, source)
+
+
+@user.my_chat_member(F.chat.type == "private")
+async def handle_private_chat_member_update(event: ChatMemberUpdated) -> None:
+    """Оповестить админа, если пользователь заблокировал бота или вышел из чата."""
+
+    new_status = event.new_chat_member.status
+    if new_status not in {ChatMemberStatus.KICKED, ChatMemberStatus.LEFT}:
+        return
+
+    lead_user = event.from_user or event.new_chat_member.user
+    if not lead_user or not lead_user.id:
+        logger.warning("Chat member update without user info: %s", event)
+        return
+
+    lead_id = lead_user.id
+
+    db_user = await safe_db_operation(get_user, lead_id)
+    if db_user is False:
+        logger.warning("Failed to fetch user %s for leave notification", lead_id)
+        db_user = None
+
+    if db_user:
+        lead_payload: dict[str, Any] = {
+            "tg_id": db_user.tg_id,
+            "username": getattr(db_user, "username", None),
+            "first_name": getattr(db_user, "first_name", None),
+            "goal": getattr(db_user, "goal", None),
+            "calories": getattr(db_user, "calories", None),
+        }
+    else:
+        lead_payload = {
+            "tg_id": lead_id,
+            "username": getattr(lead_user, "username", None),
+            "first_name": getattr(lead_user, "first_name", None),
+            "goal": None,
+            "calories": None,
+        }
+
+    try:
+        await notify_lead_card(lead_payload, title="Лид покинул бот")
+        logger.info("Sent leave notification for user %s", lead_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to send leave notification for user %s: %s", lead_id, exc)
 
 
 def _extract_user_id(args: tuple[Any, ...], kwargs: dict[str, Any]) -> int | None:
