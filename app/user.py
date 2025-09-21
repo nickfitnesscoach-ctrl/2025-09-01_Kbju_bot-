@@ -1162,6 +1162,17 @@ async def process_gender(callback: CallbackQuery, state: FSMContext):
         gender = callback.data.split("_", 1)[1]  # male/female
         if gender not in {"male", "female"}:
             return
+
+        persist_result = await safe_db_operation(
+            update_user_data,
+            callback.from_user.id,
+            gender=gender,
+        )
+        if persist_result is False:
+            logger.warning(
+                "Failed to persist gender for user %s", callback.from_user.id
+            )
+
         await state.update_data(gender=gender)
 
         await callback.message.edit_text(get_text("questions.age"), parse_mode="HTML")
