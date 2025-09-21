@@ -10,7 +10,7 @@ from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 
 from app.database.models import User, async_session
-from utils.notifications import notify_lead_card, notify_new_hot_lead
+from utils.notifications import notify_new_hot_lead
 from config import ENABLE_HOT_LEAD_ALERTS
 
 logger = logging.getLogger(__name__)
@@ -19,14 +19,12 @@ _missing_hot_lead_column_logged = False
 
 
 async def set_user(tg_id: int, username: str | None = None, first_name: str | None = None) -> None:
-    """Создать или обновить пользователя и отправить уведомления о новом лиде."""
+    """Создать или обновить пользователя в базе."""
 
-    new_lead_created = False
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
         if not user:
-            new_lead_created = True
             session.add(
                 User(
                     tg_id=tg_id,
@@ -47,19 +45,8 @@ async def set_user(tg_id: int, username: str | None = None, first_name: str | No
 
         await session.commit()
 
-    if not new_lead_created:
-        return
-
-    lead_payload: dict[str, Any] = {
-        "tg_id": tg_id,
-        "username": username,
-        "first_name": first_name,
-    }
-
-    try:
-        await notify_lead_card(lead_payload)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to send lead card notification: %s", exc)
+    # Авто-уведомления админу отключены — карточку лида можно
+    # запросить вручную через интерфейсы для администраторов.
 
 
 async def get_user(tg_id: int) -> User | None:
