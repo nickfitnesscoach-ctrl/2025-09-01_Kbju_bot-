@@ -179,14 +179,38 @@ def _resolve_optional(key: str, data: Dict[str, Any]) -> Any | None:
     return node
 
 
+def _normalize_file_id(value: Any) -> Optional[str]:
+    """Привести значение file_id к чистому идентификатору без префиксов."""
+    if value is None:
+        return None
+
+    # Допускаем, что администратор может прислать значение нестрокой
+    text = str(value).strip()
+    if not text:
+        return None
+
+    lowered = text.lower()
+    if lowered.startswith("file_id") or lowered.startswith("id"):
+        # Удаляем популярные префиксы вида "file_id: ..." или "id: ..."
+        _, _, remainder = text.partition(":")
+        text = remainder.strip() or text
+
+    # В некоторых ответах бота file_id берётся в кавычки — снимаем их
+    if (text.startswith('"') and text.endswith('"')) or (
+        text.startswith("'") and text.endswith("'")
+    ):
+        text = text[1:-1].strip()
+
+    return text or None
+
+
 def get_media_id(key: str) -> Optional[str]:
     """Получить сохранённый file_id медиа по ключу (или None)."""
     load_texts()
     value = _resolve_optional(key, TEXTS)
-    if isinstance(value, str):
-        stripped = value.strip()
-        return stripped or None
-    return None
+    if value is None:
+        return None
+    return _normalize_file_id(value)
 
 
 def set_media_id(key: str, value: Optional[str]) -> None:
@@ -200,10 +224,12 @@ def set_media_id(key: str, value: Optional[str]) -> None:
             target[part] = {}
         target = target[part]  # type: ignore[assignment]
 
-    if value is None or not str(value).strip():
+    normalized = _normalize_file_id(value)
+
+    if normalized is None:
         target.pop(parts[-1], None)
     else:
-        target[parts[-1]] = str(value)
+        target[parts[-1]] = normalized
 
     if not save_texts():
         raise RuntimeError(f"Failed to persist media id for key {key}")
