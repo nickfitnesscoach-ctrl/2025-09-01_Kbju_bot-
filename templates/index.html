@@ -33,8 +33,57 @@
                         </a>
                     </div>
                     <div class="card-body">
-                        <div class="text-preview preview-content">{{ value.text }}</div>
-                        <small class="text-muted">Ключ: <span class="text-key">{{ prefix + key }}</span></small>
+                        <div class="text-preview preview-content mb-3">{{ value.text }}</div>
+                        {% set photo_id = value.get('photo_file_id', '').strip() if value.get('photo_file_id') is string else '' %}
+                        {% set video_id = value.get('video_file_id', '').strip() if value.get('video_file_id') is string else '' %}
+                        <div class="small">
+                            <div class="mb-1">
+                                {% if photo_id %}
+                                    📷 Фото прикреплено: <code>{{ photo_id }}</code>
+                                {% else %}
+                                    <span class="text-muted">📷 Фото не прикреплено</span>
+                                {% endif %}
+                            </div>
+                            <div>
+                                {% if video_id %}
+                                    🎬 Видео прикреплено: <code>{{ video_id }}</code>
+                                {% else %}
+                                    <span class="text-muted">🎬 Видео не прикреплено</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <small class="text-muted d-block mt-2">Ключ: <span class="text-key">{{ prefix + key }}</span></small>
+                    </div>
+                </div>
+            {% elif 'text' in value %}
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">📨 {{ key.replace('_', ' ').title() }}</h5>
+                        <a href="{{ url_for('edit_text', text_key=(prefix + key)) }}" class="btn btn-primary btn-sm">
+                            ✏️ Редактировать пост
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div class="text-preview preview-content mb-3">{{ value.text }}</div>
+                        <div class="small">
+                            {% set photo_id = value.get('photo_file_id', '').strip() if value.get('photo_file_id') is string else '' %}
+                            {% set video_id = value.get('video_file_id', '').strip() if value.get('video_file_id') is string else '' %}
+                            <div class="mb-1">
+                                {% if photo_id %}
+                                    📷 Фото прикреплено: <code>{{ photo_id }}</code>
+                                {% else %}
+                                    <span class="text-muted">📷 Фото не прикреплено</span>
+                                {% endif %}
+                            </div>
+                            <div>
+                                {% if video_id %}
+                                    🎬 Видео прикреплено: <code>{{ video_id }}</code>
+                                {% else %}
+                                    <span class="text-muted">🎬 Видео не прикреплено</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <small class="text-muted d-block mt-2">Ключ: <span class="text-key">{{ prefix + key }}</span></small>
                     </div>
                 </div>
             {% else %}

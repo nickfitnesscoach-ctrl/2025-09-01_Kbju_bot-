@@ -14,7 +14,7 @@ from sqlalchemy import func, not_, or_, select
 
 from app.database.models import User, async_session
 from app.database.requests import update_drip_stage
-from app.texts import get_text
+from app.texts import get_media_id, get_text
 from config import (
     DRIP_24H_MIN,
     DRIP_48H_MIN,
@@ -138,6 +138,36 @@ async def _send_stage(bot: Bot, candidate: DripCandidate, stage: int) -> tuple[b
     text, key = _choose_stage_text(stage, candidate.gender)
     if not text:
         return False, key, "template-not-found"
+
+    base_key = key.rsplit(".", 1)[0] if key else None
+    photo_id = get_media_id(f"{base_key}.photo_file_id") if base_key else None
+    video_id = get_media_id(f"{base_key}.video_file_id") if base_key else None
+
+    try:
+        if photo_id:
+            await bot.send_photo(chat_id=candidate.tg_id, photo=photo_id)
+    except asyncio.CancelledError:  # pragma: no cover - cooperates with shutdown
+        raise
+    except Exception as exc:  # noqa: BLE001 - attachments are optional, continue with text
+        logger.warning(
+            "DRIP photo send failed | user=%s | stage=%s | error=%s",
+            candidate.tg_id,
+            stage,
+            exc,
+        )
+
+    try:
+        if video_id:
+            await bot.send_video(chat_id=candidate.tg_id, video=video_id)
+    except asyncio.CancelledError:  # pragma: no cover - cooperates with shutdown
+        raise
+    except Exception as exc:  # noqa: BLE001 - attachments are optional, continue with text
+        logger.warning(
+            "DRIP video send failed | user=%s | stage=%s | error=%s",
+            candidate.tg_id,
+            stage,
+            exc,
+        )
 
     try:
         await bot.send_message(chat_id=candidate.tg_id, text=text, parse_mode="HTML")

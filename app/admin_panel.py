@@ -139,7 +139,10 @@ def edit_text(text_key):
 @login_required
 def save_text():
     text_key = request.form["text_key"]
-    text_content = request.form["text_content"]
+    text_content = request.form.get("text_content", "")
+    is_message = request.form.get("is_message") == "1"
+    photo_file_id = request.form.get("photo_file_id", "").strip()
+    video_file_id = request.form.get("video_file_id", "").strip()
     password = request.form.get("password", "")
 
     if not _verify_password(password):
@@ -156,7 +159,28 @@ def save_text():
             current[key] = {}
         current = current[key]
 
-    current[keys[-1]] = text_content
+    target_key = keys[-1]
+
+    if is_message:
+        target = current.get(target_key)
+        if not isinstance(target, dict):
+            target = {}
+
+        target["text"] = text_content
+
+        if photo_file_id:
+            target["photo_file_id"] = photo_file_id
+        else:
+            target.pop("photo_file_id", None)
+
+        if video_file_id:
+            target["video_file_id"] = video_file_id
+        else:
+            target.pop("video_file_id", None)
+
+        current[target_key] = target
+    else:
+        current[target_key] = text_content
     save_texts(texts)
     flash("Текст успешно сохранен", "success")
     return redirect(url_for("index"))
