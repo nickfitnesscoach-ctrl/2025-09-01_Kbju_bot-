@@ -78,7 +78,7 @@ def migrate_drop_drip_columns(db_url: str) -> None:
                     "[migrate] users: method=ALTER TABLE DROP COLUMN (SQLite %s) - OK",
                     sqlite_version,
                 )
-                _log_current_columns(conn)
+                
                 return
             logger.info("[migrate] users: ALTER TABLE DROP COLUMN failed, fallback to recreate")
 
@@ -89,7 +89,7 @@ def migrate_drop_drip_columns(db_url: str) -> None:
             "[migrate] users: method=recreate table (SQLite %s) - OK",
             sqlite_version,
         )
-        _log_current_columns(conn)
+
     finally:
         try:
             conn.execute("PRAGMA foreign_keys=ON")
@@ -108,12 +108,6 @@ def _detect_columns_to_drop(conn: sqlite3.Connection) -> tuple[set[str], list[sq
 def _snapshot_table_info(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     cursor = conn.execute(f"PRAGMA table_info({_quote_identifier(_USERS_TABLE)})")
     return cursor.fetchall()
-
-
-def _log_current_columns(conn: sqlite3.Connection) -> None:
-    snapshot = _snapshot_table_info(conn)
-    column_names = [row["name"] for row in snapshot]
-    logger.info("[migrate] users: columns after migration -> %s", column_names)
 
 
 def _backup_database_file(db_path: Path) -> Path | None:
