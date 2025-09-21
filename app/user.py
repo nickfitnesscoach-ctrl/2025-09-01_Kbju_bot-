@@ -1021,6 +1021,19 @@ async def cmd_ping(message: Message):
     await message.answer("pong")
 
 
+@user.message(Command("contact_author"), F.chat.type == "private")
+@rate_limit
+@error_handler
+async def cmd_contact_author(message: Message) -> None:
+    """Информация о том, как связаться с автором бота."""
+
+    logger.debug(
+        "/contact_author entered for user %s",
+        message.from_user.id if message.from_user else "unknown",
+    )
+    await message.answer(get_text("contact_author"))
+
+
 @user.callback_query(F.data == "main_menu")
 @rate_limit
 @error_handler
