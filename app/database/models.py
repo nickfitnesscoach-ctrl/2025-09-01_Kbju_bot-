@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover - fallback для SQLAlchemy 2.0+
     AddColumn = None  # type: ignore[assignment]
 
 from config import DB_URL, DEBUG
+from app.database.migrations import migrate_drop_drip_columns
 
 engine = create_async_engine(url=DB_URL,
                              echo=DEBUG)
@@ -67,6 +68,7 @@ class User(Base):
 
 
 async def async_main():
+    migrate_drop_drip_columns(DB_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_additional_user_columns)
