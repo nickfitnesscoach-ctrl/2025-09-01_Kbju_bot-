@@ -74,6 +74,19 @@ async def is_user_subscribed(bot: Bot, user_id: int) -> bool:
     return False
 
 
+_pending_on_success: dict[int, Callable[[], Awaitable[None]]] = {}
+
+
+def _store_pending_on_success(user_id: int, handler: Callable[[], Awaitable[None]]) -> None:
+    if handler is None:
+        return
+    _pending_on_success[user_id] = handler
+
+
+def _pop_pending_on_success(user_id: int) -> Callable[[], Awaitable[None]] | None:
+    return _pending_on_success.pop(user_id, None)
+
+
 async def ensure_subscription_and_continue(
     bot: Bot,
     user_id: int,
@@ -85,21 +98,32 @@ async def ensure_subscription_and_continue(
     try:
         gating_enabled = await should_gate()
         if not gating_enabled:
+            _pop_pending_on_success(user_id)
             await _run_on_success(message_or_cb, on_success)
             return
 
         is_subscribed = await is_user_subscribed(bot, user_id)
         if is_subscribed:
             success_text = None
+            handler_to_run = on_success
             if isinstance(message_or_cb, CallbackQuery) and message_or_cb.data == CHECK_CALLBACK_DATA:
                 success_text = get_text("subscription_gate.success")
-            await _run_on_success(message_or_cb, on_success, success_text=success_text)
+                stored_handler = _pop_pending_on_success(user_id)
+                if stored_handler:
+                    handler_to_run = stored_handler
+            else:
+                _pop_pending_on_success(user_id)
+
+            await _run_on_success(message_or_cb, handler_to_run, success_text=success_text)
             return
 
         # User is not subscribed — show gate or inform about missing subscription.
         if isinstance(message_or_cb, CallbackQuery) and message_or_cb.data == CHECK_CALLBACK_DATA:
+            if user_id not in _pending_on_success:
+                _store_pending_on_success(user_id, on_success)
             await _notify_not_subscribed(message_or_cb)
         else:
+            _store_pending_on_success(user_id, on_success)
             await _show_gate_prompt(message_or_cb)
     except Exception as exc:  # pragma: no cover - fail-safe guard
         logger.exception("Subscription gate: unexpected failure for user %s: %s", user_id, exc)

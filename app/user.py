@@ -1170,12 +1170,8 @@ async def start_kbju_flow(callback: CallbackQuery, state: FSMContext):
     if not (callback.from_user and callback.message):
         return
 
-    await ensure_subscription_and_continue(
-        callback.bot,
-        callback.from_user.id,
-        callback,
-        on_success=lambda: _start_kbju_flow_inner(callback),
-    )
+    await _start_kbju_flow_inner(callback)
+    await callback.answer()
 
 
 @user.callback_query(F.data == CHECK_CALLBACK_DATA)
@@ -1343,6 +1339,18 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
     if not (callback.from_user and callback.message and callback.data):
         return
 
+    await ensure_subscription_and_continue(
+        callback.bot,
+        callback.from_user.id,
+        callback,
+        on_success=lambda: _process_goal_after_subscription(callback, state),
+    )
+
+
+async def _process_goal_after_subscription(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.data:
+        return
+
     try:
         goal = callback.data.split("_", 1)[1]  # weight_loss/maintenance/weight_gain
         data = await state.get_data()
@@ -1369,9 +1377,6 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
         # Планируем отложенное предложение
         schedule_delayed_offer(callback.from_user.id, callback.message.chat.id)
         
-        # Обязательно отвечаем на callback, чтобы Telegram не показывал ошибку
-        await callback.answer()
-
         # Очищаем состояние
         await state.clear()
 
@@ -1379,7 +1384,6 @@ async def process_goal(callback: CallbackQuery, state: FSMContext):
         logger.exception("process_goal error: %s", e)
         try:
             await callback.message.edit_text(get_text("errors.calculation_error"), reply_markup=back_to_menu(), parse_mode="HTML")
-            await callback.answer()
             await state.clear()
         except Exception as e2:
             logger.exception("Failed to send error message: %s", e2)
