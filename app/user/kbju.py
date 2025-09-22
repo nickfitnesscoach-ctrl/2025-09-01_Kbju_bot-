@@ -34,7 +34,6 @@ from app.states import KBJUStates
 from app.texts import get_button_text, get_text
 from app.webhook import TimerService, WebhookService
 from config import CHANNEL_URL
-from utils.notifications import notify_lead_card
 
 from .shared import error_handler, rate_limit, safe_db_operation, sanitize_text, track_user_activity
 
@@ -132,16 +131,6 @@ async def calculate_and_save_kbju(user_id: int, user_data: dict[str, Any]) -> di
         calculated_at=datetime.utcnow(),
         priority_score=PRIORITY_SCORES["new"],
     )
-
-    lead_payload = {
-        "tg_id": user_id,
-        "username": user_data.get("username"),
-        "first_name": user_data.get("first_name"),
-        "goal": user_data.get("goal"),
-        "calories": kbju.get("calories"),
-    }
-
-    asyncio.create_task(notify_lead_card(lead_payload))
 
     return kbju
 
