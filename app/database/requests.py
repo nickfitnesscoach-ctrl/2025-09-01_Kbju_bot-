@@ -28,8 +28,6 @@ async def set_user(
 
     new_lead_payload: dict[str, Any] | None = None
 
-    new_lead_payload: dict[str, Any] | None = None
-
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
@@ -65,6 +63,8 @@ async def set_user(
         if new_lead_payload is not None:
             new_lead_payload["goal"] = getattr(user, "goal", None)
             new_lead_payload["calories"] = getattr(user, "calories", None)
+
+    return new_lead_payload
 
 async def get_user(tg_id: int) -> User | None:
     """Получить пользователя по Telegram ID."""
