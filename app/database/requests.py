@@ -19,8 +19,14 @@ logger = logging.getLogger(__name__)
 _missing_hot_lead_column_logged = False
 
 
-async def set_user(tg_id: int, username: str | None = None, first_name: str | None = None) -> None:
-    """Создать или обновить пользователя в базе."""
+async def set_user(
+    tg_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Создать или обновить пользователя и вернуть данные для уведомления."""
+
+    new_lead_payload: dict[str, Any] | None = None
 
     new_lead_payload: dict[str, Any] | None = None
 
@@ -59,13 +65,6 @@ async def set_user(tg_id: int, username: str | None = None, first_name: str | No
         if new_lead_payload is not None:
             new_lead_payload["goal"] = getattr(user, "goal", None)
             new_lead_payload["calories"] = getattr(user, "calories", None)
-
-    if new_lead_payload is not None:
-        try:
-            await notify_lead_card(new_lead_payload, title=get_text("admin.leads.new_title"))
-        except Exception as exc:  # noqa: BLE001 - уведомление не должно ломать основной поток
-            logger.exception("Failed to send new lead notification for user %s: %s", tg_id, exc)
-
 
 async def get_user(tg_id: int) -> User | None:
     """Получить пользователя по Telegram ID."""
