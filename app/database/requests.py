@@ -10,7 +10,8 @@ from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 
 from app.database.models import User, async_session
-from utils.notifications import notify_new_hot_lead
+from app.texts import get_text
+from utils.notifications import notify_lead_card, notify_new_hot_lead
 from config import ENABLE_HOT_LEAD_ALERTS
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ async def set_user(
     first_name: str | None = None,
 ) -> dict[str, Any] | None:
     """Создать или обновить пользователя и вернуть данные для уведомления."""
+
+    new_lead_payload: dict[str, Any] | None = None
 
     new_lead_payload: dict[str, Any] | None = None
 
@@ -62,9 +65,6 @@ async def set_user(
         if new_lead_payload is not None:
             new_lead_payload["goal"] = getattr(user, "goal", None)
             new_lead_payload["calories"] = getattr(user, "calories", None)
-
-    return new_lead_payload
-
 
 async def get_user(tg_id: int) -> User | None:
     """Получить пользователя по Telegram ID."""
