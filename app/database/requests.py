@@ -10,7 +10,8 @@ from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 
 from app.database.models import User, async_session
-from utils.notifications import notify_new_hot_lead
+from app.texts import get_text
+from utils.notifications import notify_lead_card, notify_new_hot_lead
 from config import ENABLE_HOT_LEAD_ALERTS
 
 logger = logging.getLogger(__name__)
@@ -21,20 +22,28 @@ _missing_hot_lead_column_logged = False
 async def set_user(tg_id: int, username: str | None = None, first_name: str | None = None) -> None:
     """Создать или обновить пользователя в базе."""
 
+    new_lead_payload: dict[str, Any] | None = None
+
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
         if not user:
-            session.add(
-                User(
-                    tg_id=tg_id,
-                    username=username,
-                    first_name=first_name,
-                    funnel_status="new",
-                    priority_score=0,
-                    last_activity_at=datetime.utcnow(),
-                )
+            user = User(
+                tg_id=tg_id,
+                username=username,
+                first_name=first_name,
+                funnel_status="new",
+                priority_score=0,
+                last_activity_at=datetime.utcnow(),
             )
+            session.add(user)
+            new_lead_payload = {
+                "tg_id": tg_id,
+                "username": username,
+                "first_name": first_name,
+                "goal": None,
+                "calories": None,
+            }
         else:
             if username and user.username != username:
                 user.username = username
@@ -47,8 +56,15 @@ async def set_user(tg_id: int, username: str | None = None, first_name: str | No
 
         await session.commit()
 
-    # Авто-уведомления админу отключены — карточку лида можно
-    # запросить вручную через интерфейсы для администраторов.
+        if new_lead_payload is not None:
+            new_lead_payload["goal"] = getattr(user, "goal", None)
+            new_lead_payload["calories"] = getattr(user, "calories", None)
+
+    if new_lead_payload is not None:
+        try:
+            await notify_lead_card(new_lead_payload, title=get_text("admin.leads.new_title"))
+        except Exception as exc:  # noqa: BLE001 - уведомление не должно ломать основной поток
+            logger.exception("Failed to send new lead notification for user %s: %s", tg_id, exc)
 
 
 async def get_user(tg_id: int) -> User | None:
