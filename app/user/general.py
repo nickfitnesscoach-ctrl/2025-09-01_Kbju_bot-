@@ -13,6 +13,7 @@ from app.calculator import get_activity_description
 from app.database.requests import get_user, set_user
 from app.keyboards import main_menu, profile_keyboard
 from app.texts import get_media_id, get_text
+from utils.notifications import notify_lead_card
 
 from .shared import error_handler, rate_limit, safe_db_operation, sanitize_text, track_user_activity
 
@@ -75,15 +76,25 @@ async def cmd_start(message: Message) -> None:
     username = sanitize_text(message.from_user.username or "", 50)
     first_name = sanitize_text(message.from_user.first_name or get_text("fallbacks.default_first_name"), 50)
 
-    result = await safe_db_operation(
+    lead_payload = await safe_db_operation(
         set_user,
         tg_id=message.from_user.id,
         username=username,
         first_name=first_name,
     )
-    if result is False:
+    if lead_payload is False:
         await message.answer(get_text("errors.temp_error"), parse_mode="HTML")
         return
+
+    if isinstance(lead_payload, dict):
+        try:
+            await notify_lead_card(lead_payload, title=get_text("admin.leads.new_title"))
+        except Exception as exc:  # noqa: BLE001 - уведомление не должно ломать сценарий
+            logger.exception(
+                "Failed to send activation notification for user %s: %s",
+                message.from_user.id,
+                exc,
+            )
 
     await send_welcome_sequence(message)
 

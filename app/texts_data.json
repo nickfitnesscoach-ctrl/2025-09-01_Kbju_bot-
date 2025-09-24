@@ -164,6 +164,7 @@
     "counter": "📊 {current} из {total}",
     "lead_card": "{priority_icon} <b>Лид #{index}</b>\n\n👤 <b>{first_name}</b>\n🆔 ID: <code>{tg_id}</code>\n💬 Username: {username_link}\n🏆 Приоритет: <b>{priority_score}</b>\n📈 Статус: <code>{funnel_status}</code>\n\n📊 <b>КБЖУ данные</b>\n• Пол: {gender_text}\n• Возраст: {age_text}\n• Рост: {height_text}\n• Вес: {weight_text}\n• Активность: {activity_text}\n• Цель: {goal_text}\n• Калории: {calories_text}\n\n🎯 <b>Направление:</b> {priority_label}\n🕓 <i>Обновлен: {updated_at}</i>",
     "leads": {
+      "new_title": "Лид активировал бот",
       "left_title": "Лид покинул бот",
       "no_permission": "Недостаточно прав.",
       "no_permission_alert": "Недостаточно прав",

@@ -18,23 +18,35 @@ logger = logging.getLogger(__name__)
 _missing_hot_lead_column_logged = False
 
 
-async def set_user(tg_id: int, username: str | None = None, first_name: str | None = None) -> None:
-    """Создать или обновить пользователя в базе."""
+async def set_user(
+    tg_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Создать или обновить пользователя и вернуть данные для уведомления."""
+
+    new_lead_payload: dict[str, Any] | None = None
 
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
         if not user:
-            session.add(
-                User(
-                    tg_id=tg_id,
-                    username=username,
-                    first_name=first_name,
-                    funnel_status="new",
-                    priority_score=0,
-                    last_activity_at=datetime.utcnow(),
-                )
+            user = User(
+                tg_id=tg_id,
+                username=username,
+                first_name=first_name,
+                funnel_status="new",
+                priority_score=0,
+                last_activity_at=datetime.utcnow(),
             )
+            session.add(user)
+            new_lead_payload = {
+                "tg_id": tg_id,
+                "username": username,
+                "first_name": first_name,
+                "goal": None,
+                "calories": None,
+            }
         else:
             if username and user.username != username:
                 user.username = username
@@ -47,8 +59,11 @@ async def set_user(tg_id: int, username: str | None = None, first_name: str | No
 
         await session.commit()
 
-    # Авто-уведомления админу отключены — карточку лида можно
-    # запросить вручную через интерфейсы для администраторов.
+        if new_lead_payload is not None:
+            new_lead_payload["goal"] = getattr(user, "goal", None)
+            new_lead_payload["calories"] = getattr(user, "calories", None)
+
+    return new_lead_payload
 
 
 async def get_user(tg_id: int) -> User | None:
