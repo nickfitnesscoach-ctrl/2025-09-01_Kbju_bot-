@@ -1,10 +1,13 @@
 from datetime import datetime
 import logging
 
+from pathlib import Path
+
 from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, String, inspect, text
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.engine import make_url
 
 try:  # pragma: no cover - совместимость разных версий SQLAlchemy
     from sqlalchemy.schema import AddColumn
@@ -13,12 +16,40 @@ except ImportError:  # pragma: no cover - fallback для SQLAlchemy 2.0+
 
 from config import DB_URL, DEBUG
 
-engine = create_async_engine(url=DB_URL,
-                             echo=DEBUG)
-
-async_session = async_sessionmaker(engine)
-
 logger = logging.getLogger(__name__)
+
+
+def _ensure_sqlite_directory(db_url: str) -> None:
+    """Create a directory for SQLite databases if it does not exist."""
+
+    try:
+        url = make_url(db_url)
+    except Exception:  # noqa: BLE001 - keep engine creation resilient
+        logger.warning("Failed to parse DB_URL, skipping SQLite directory check")
+        return
+
+    if url.get_backend_name() != "sqlite":
+        return
+
+    database: str | None = url.database
+    if not database or database == ":memory:":
+        return
+
+    path = Path(database)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:  # noqa: BLE001 - log but do not break import
+        logger.error("Failed to create directory for SQLite database %s: %s", path, exc)
+
+
+_ensure_sqlite_directory(DB_URL)
+
+engine = create_async_engine(url=DB_URL, echo=DEBUG)
+
+async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 class Base(AsyncAttrs, DeclarativeBase):
