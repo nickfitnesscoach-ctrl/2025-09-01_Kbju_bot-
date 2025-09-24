@@ -42,6 +42,8 @@ async def set_user(tg_id: int, username: str | None = None, first_name: str | No
                 user.first_name = first_name
             user.last_activity_at = datetime.utcnow()
             user.updated_at = datetime.utcnow()
+            if getattr(user, "drip_stage", None) not in (None, 0):
+                user.drip_stage = 0
 
         await session.commit()
 
@@ -216,6 +218,8 @@ async def update_last_activity(tg_id: int) -> bool:
 
         user.last_activity_at = datetime.utcnow()
         user.updated_at = datetime.utcnow()
+        if getattr(user, "drip_stage", None) not in (None, 0):
+            user.drip_stage = 0
         await session.commit()
         return True
 
