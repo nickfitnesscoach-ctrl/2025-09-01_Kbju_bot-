@@ -60,9 +60,14 @@ class KBJUCalculator:
         calories_maintenance = bmr * cls.ACTIVITY_COEFFICIENTS[activity]
         calories_target = calories_maintenance * (1 + cls.GOAL_ADJUSTMENTS[goal])
 
-        proteins = round(weight * 1.8)                          # 1.8 г/кг
-        fats = round(calories_target * 0.25 / 9)                # 25% калорий
-        carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
+        if goal == "weight_gain":
+            proteins = round(weight * 2.0)                      # 2 г/кг
+            fats = round(weight * 1.1)                          # 1.1 г/кг
+            carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
+        else:
+            proteins = round(weight * 1.8)                      # 1.8 г/кг
+            fats = round(calories_target * 0.25 / 9)            # 25% калорий
+            carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
 
         return {
             "calories": round(calories_target),
