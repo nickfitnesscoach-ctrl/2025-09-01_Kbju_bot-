@@ -246,24 +246,75 @@ if (textContentElement) {
 
 {% if is_message %}
 const csrfInput = document.querySelector('input[name="csrf_token"]');
-const uploadUrl = "{{ url_for('upload_media') }}"
-    if (!attached || !empty) {
+const uploadUrl = "{{ url_for('upload_media') }}";
+
+function updateAttachmentPreview(mediaType, fileId, previewUrl) {
+    const trimmed = fileId ? fileId.trim() : '';
+    const attached = document.getElementById(`${mediaType}_preview_attached`);
+    const empty = document.getElementById(`${mediaType}_preview_empty`);
+    const code = document.getElementById(`${mediaType}_preview_code`);
+
+    if (attached && empty) {
+        if (trimmed) {
+            if (code) {
+                code.textContent = trimmed;
+            }
+            attached.classList.remove('d-none');
+            empty.classList.add('d-none');
+        } else {
+            if (code) {
+                code.textContent = '';
+            }
+            attached.classList.add('d-none');
+            empty.classList.remove('d-none');
+        }
+    }
+
+    const mediaWrapper = document.getElementById(`${mediaType}_preview_media_wrapper`);
+    const placeholder = document.getElementById(`${mediaType}_preview_placeholder`);
+
+    if (!mediaWrapper || !placeholder) {
         return;
     }
 
-    if (fileId) {
-        if (code) {
-            code.textContent = fileId;
+    if (previewUrl) {
+        if (mediaType === 'photo') {
+            const img = document.getElementById('photo_preview_media');
+            if (img) {
+                img.src = previewUrl;
+            }
+        } else if (mediaType === 'video') {
+            const video = document.getElementById('video_preview_media');
+            if (video) {
+                video.src = previewUrl;
+                video.load();
+            }
         }
-        attached.classList.remove('d-none');
-        empty.classList.add('d-none');
-    } else {
-        if (code) {
-            code.textContent = '';
-        }
-        attached.classList.add('d-none');
-        empty.classList.remove('d-none');
+        mediaWrapper.classList.remove('d-none');
+        placeholder.classList.add('d-none');
+    } else if (!trimmed) {
+        mediaWrapper.classList.add('d-none');
+        placeholder.classList.remove('d-none');
     }
+}
+
+const initialPreviewUrls = {
+    photo: {{ photo_preview_url|tojson }},
+    video: {{ video_preview_url|tojson }},
+};
+
+['photo', 'video'].forEach((mediaType) => {
+    const input = document.getElementById(`${mediaType}_file_id`);
+    if (!input) {
+        return;
+    }
+
+    input.addEventListener('input', () => {
+        updateAttachmentPreview(mediaType, input.value);
+    });
+
+    updateAttachmentPreview(mediaType, input.value, initialPreviewUrls[mediaType] || null);
+});
 
 async function uploadMedia(mediaType) {
     const fileInput = document.getElementById(`${mediaType}_upload_input`);
@@ -311,6 +362,7 @@ async function uploadMedia(mediaType) {
         }
 
         targetInput.value = data.file_id;
+        updateAttachmentPreview(mediaType, data.file_id, data.preview_url || null);
         statusElement.textContent = 'Файл загружен. file_id подставлен автоматически.';
         statusElement.className = 'small text-success mt-1';
     } catch (error) {
