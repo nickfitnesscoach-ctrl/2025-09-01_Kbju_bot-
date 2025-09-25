@@ -543,23 +543,7 @@ async def process_lead_request(callback: CallbackQuery) -> None:
             parse_mode="HTML",
         )
 
-    try:
-        if callback.message.text:
-            await callback.message.edit_text(
-                success_text,
-                reply_markup=reply_markup,
-                parse_mode="HTML",
-            )
-        elif callback.message.caption:
-            await callback.message.edit_caption(
-                success_text,
-                reply_markup=reply_markup,
-                parse_mode="HTML",
-            )
-        else:
-            await _send_success_message()
-    except TelegramBadRequest:
-        await _send_success_message()
+    await _send_success_message()
     await callback.answer()
 
 
