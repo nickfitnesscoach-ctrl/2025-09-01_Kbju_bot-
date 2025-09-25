@@ -22,6 +22,7 @@ __all__ = [
     "save_texts",
     "load_texts",
     "get_media_id",
+    "get_optional_text",
     "set_media_id",
     "TEXTS",
 ]
@@ -183,6 +184,19 @@ def get_media_id(key: str) -> Optional[str]:
     """Получить сохранённый file_id медиа по ключу (или None)."""
     load_texts()
     value = _resolve_optional(key, TEXTS)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def get_optional_text(key: str) -> Optional[str]:
+    """Получить необязательный текст по ключу (или None, если пусто)."""
+
+    load_texts()
+    value = _resolve_optional(key, TEXTS)
+    if isinstance(value, dict):
+        value = value.get("text")
     if isinstance(value, str):
         stripped = value.strip()
         return stripped or None

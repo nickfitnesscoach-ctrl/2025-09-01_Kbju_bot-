@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -31,7 +32,8 @@ from app.keyboards import (
     priority_keyboard,
 )
 from app.states import KBJUStates
-from app.texts import get_button_text, get_media_id, get_text
+from app.texts import get_button_text, get_media_id, get_optional_text, get_text
+from app.utils import CAPTION_LIMIT, split_html_by_len, strip_html
 from app.webhook import TimerService, WebhookService
 from config import CHANNEL_URL
 
@@ -551,22 +553,61 @@ async def process_priority(callback: CallbackQuery) -> None:
 
     offer_text = get_text("consultation_offer")
     photo_id = get_media_id("consultation_offer.photo_file_id")
+    image_url = get_optional_text("consultation_offer.image_url")
+    keyboard = consultation_contact_keyboard()
 
-    if photo_id:
+    try:
+        await callback.message.edit_reply_markup()
+    except TelegramBadRequest:
+        pass
+
+    caption_text = offer_text
+    tail_text = ""
+    if len(strip_html(offer_text)) > CAPTION_LIMIT:
+        caption_text, tail_text = split_html_by_len(offer_text)
+
+    async def _send_tail_if_needed() -> None:
+        if tail_text and strip_html(tail_text).strip():
+            await callback.message.answer(
+                tail_text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+
+    async def _send_photo_offer(photo: str) -> bool:
         try:
-            await callback.message.answer_photo(photo=photo_id)
-        except Exception as exc:  # noqa: BLE001 - optional media
+            await callback.message.answer_photo(
+                photo=photo,
+                caption=caption_text,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+        except TelegramBadRequest as exc:
             logger.warning(
                 "Failed to send consultation offer photo for user %s: %s",
                 callback.from_user.id,
                 exc,
             )
+            return False
 
-    await callback.message.edit_text(
-        offer_text,
-        reply_markup=consultation_contact_keyboard(),
-        parse_mode="HTML",
-    )
+        await _send_tail_if_needed()
+        return True
+
+    sent = False
+    if photo_id:
+        sent = await _send_photo_offer(photo_id)
+
+    if not sent and image_url:
+        sent = await _send_photo_offer(image_url)
+
+    if not sent:
+        await callback.message.answer(
+            offer_text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+
     await callback.answer()
 
 
