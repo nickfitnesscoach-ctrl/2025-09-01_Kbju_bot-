@@ -157,6 +157,41 @@ def logout():
 
 @app.route("/edit/<path:text_key>")
 @login_required
+def _get_telegram_file_url(file_id: str | None) -> str | None:
+    """Resolve direct download URL for a Telegram file."""
+
+    if not file_id or not TELEGRAM_BOT_TOKEN:
+        return None
+
+    endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile"
+
+    try:
+        response = requests.get(endpoint, params={"file_id": file_id}, timeout=15)
+    except RequestException as exc:
+        logger.debug("Failed to fetch file path for %s: %s", file_id, exc)
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.debug("Telegram getFile returned non-JSON response for %s", file_id)
+        return None
+
+    if not response.ok or not payload.get("ok"):
+        logger.debug("Telegram getFile failed for %s: %s", file_id, payload)
+        return None
+
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return None
+
+    file_path = result.get("file_path")
+    if not isinstance(file_path, str):
+        return None
+
+    return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+
+
 def edit_text(text_key):
     texts = load_texts()
     keys = text_key.split(".")
@@ -169,7 +204,20 @@ def edit_text(text_key):
             value = None
             break
 
-    return render_template("edit_text.html", text_key=text_key, text_data=value)
+    photo_preview_url = None
+    video_preview_url = None
+
+    if isinstance(value, dict):
+        photo_preview_url = _get_telegram_file_url(value.get("photo_file_id"))
+        video_preview_url = _get_telegram_file_url(value.get("video_file_id"))
+
+    return render_template(
+        "edit_text.html",
+        text_key=text_key,
+        text_data=value,
+        photo_preview_url=photo_preview_url,
+        video_preview_url=video_preview_url,
+    )
 
 
 @app.route("/save_text", methods=["POST"])
@@ -307,8 +355,6 @@ def upload_media():
         request.form.get("text_key", "<unknown>"),
         file_id,
     )
-    return jsonify({"ok": True, "file_id": file_id})
-
 
 @app.route("/health")
 def health():

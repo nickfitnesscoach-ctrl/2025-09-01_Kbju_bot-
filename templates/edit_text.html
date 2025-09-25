@@ -163,6 +163,46 @@
                                 </span>
                             </li>
                         </ul>
+
+                        <div class="mt-3">
+                            <div
+                                id="photo_preview_media_wrapper"
+                                class="{% if not photo_preview_url %}d-none{% endif %}"
+                            >
+                                <img
+                                    id="photo_preview_media"
+                                    src="{{ photo_preview_url }}"
+                                    alt="Предпросмотр фото"
+                                    class="img-fluid rounded border"
+                                >
+                            </div>
+                            <div
+                                id="photo_preview_placeholder"
+                                class="text-muted small {% if photo_preview_url %}d-none{% endif %}"
+                            >
+                                Здесь появится предпросмотр фото после загрузки.
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <div
+                                id="video_preview_media_wrapper"
+                                class="{% if not video_preview_url %}d-none{% endif %}"
+                            >
+                                <video
+                                    id="video_preview_media"
+                                    class="w-100 rounded border"
+                                    controls
+                                    {% if video_preview_url %}src="{{ video_preview_url }}"{% endif %}
+                                ></video>
+                            </div>
+                            <div
+                                id="video_preview_placeholder"
+                                class="text-muted small {% if video_preview_url %}d-none{% endif %}"
+                            >
+                                Предпросмотр видео будет доступен после загрузки.
+                            </div>
+                        </div>
                     </div>
                 {% endif %}
 
@@ -208,10 +248,6 @@ if (textContentElement) {
 const csrfInput = document.querySelector('input[name="csrf_token"]');
 const uploadUrl = "{{ url_for('upload_media') }}";
 
-function updatePreview(mediaType, fileId) {
-    const attached = document.getElementById(`${mediaType}_preview_attached`);
-    const empty = document.getElementById(`${mediaType}_preview_empty`);
-    const code = document.getElementById(`${mediaType}_preview_code`);
 
     if (!attached || !empty) {
         return;
@@ -278,7 +314,6 @@ async function uploadMedia(mediaType) {
         }
 
         targetInput.value = data.file_id;
-        updatePreview(mediaType, data.file_id);
         statusElement.textContent = 'Файл загружен. file_id подставлен автоматически.';
         statusElement.className = 'small text-success mt-1';
     } catch (error) {
@@ -290,6 +325,7 @@ async function uploadMedia(mediaType) {
         fileInput.value = '';
     }
 }
+  
 {% endif %}
 </script>
 {% endblock %}
