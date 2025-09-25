@@ -15,6 +15,7 @@ from sqlalchemy import func, not_, or_, select
 from app.database.models import User, async_session
 from app.database.requests import update_drip_stage
 from app.texts import get_media_id, get_text
+from app.utils import CAPTION_LIMIT, strip_html
 from config import (
     DRIP_24H_MIN,
     DRIP_48H_MIN,
@@ -142,6 +143,38 @@ async def _send_stage(bot: Bot, candidate: DripCandidate, stage: int) -> tuple[b
     base_key = key.rsplit(".", 1)[0] if key else None
     photo_id = get_media_id(f"{base_key}.photo_file_id") if base_key else None
     video_id = get_media_id(f"{base_key}.video_file_id") if base_key else None
+    image_url = get_media_id(f"{base_key}.image_url") if base_key else None
+
+    if base_key == "drip.case_72h.any" and (photo_id or image_url):
+        caption_length = len(strip_html(text))
+        if caption_length > CAPTION_LIMIT:
+            logger.warning(
+                "DRIP caption too long | user=%s | stage=%s | length=%s | limit=%s",
+                candidate.tg_id,
+                stage,
+                caption_length,
+                CAPTION_LIMIT,
+            )
+        else:
+            media_id = photo_id or image_url
+            try:
+                await bot.send_photo(
+                    chat_id=candidate.tg_id,
+                    photo=media_id,
+                    caption=text,
+                    parse_mode="HTML",
+                )
+            except asyncio.CancelledError:  # pragma: no cover - cooperates with shutdown
+                raise
+            except Exception as exc:  # noqa: BLE001 - fall back to legacy flow
+                logger.warning(
+                    "DRIP photo with caption send failed | user=%s | stage=%s | error=%s",
+                    candidate.tg_id,
+                    stage,
+                    exc,
+                )
+            else:
+                return True, key, None
 
     try:
         if photo_id:
