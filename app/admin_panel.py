@@ -20,7 +20,6 @@ from flask import Flask, flash, jsonify, redirect, render_template, request, ses
 from flask_wtf.csrf import CSRFProtect
 from requests import RequestException
 from werkzeug.security import check_password_hash, generate_password_hash
-
 for env_path in (PROJECT_ROOT / ".env", CURRENT_DIR / ".env"):
     load_dotenv(env_path, override=False)
 
@@ -192,6 +191,41 @@ def _get_telegram_file_url(file_id: str | None) -> str | None:
 
 @app.route("/edit/<path:text_key>")
 @login_required
+def _get_telegram_file_url(file_id: str | None) -> str | None:
+    """Resolve direct download URL for a Telegram file."""
+
+    if not file_id or not TELEGRAM_BOT_TOKEN:
+        return None
+
+    endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile"
+
+    try:
+        response = requests.get(endpoint, params={"file_id": file_id}, timeout=15)
+    except RequestException as exc:
+        logger.debug("Failed to fetch file path for %s: %s", file_id, exc)
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.debug("Telegram getFile returned non-JSON response for %s", file_id)
+        return None
+
+    if not response.ok or not payload.get("ok"):
+        logger.debug("Telegram getFile failed for %s: %s", file_id, payload)
+        return None
+
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return None
+
+    file_path = result.get("file_path")
+    if not isinstance(file_path, str):
+        return None
+
+    return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+
+
 def edit_text(text_key):
     texts = load_texts()
     keys = text_key.split(".")
@@ -348,16 +382,13 @@ def upload_media():
             jsonify({"ok": False, "error": "Не удалось получить file_id из ответа Telegram."}),
             502,
         )
-
-    preview_url = _get_telegram_file_url(file_id)
-
+      
     logger.info(
         "Uploaded %s for text '%s' with file_id=%s",
         media_type,
         request.form.get("text_key", "<unknown>"),
         file_id,
     )
-    return jsonify({"ok": True, "file_id": file_id, "preview_url": preview_url})
 
 
 @app.route("/health")
