@@ -246,9 +246,7 @@ if (textContentElement) {
 
 {% if is_message %}
 const csrfInput = document.querySelector('input[name="csrf_token"]');
-const uploadUrl = "{{ url_for('upload_media') }}";
-
-
+const uploadUrl = "{{ url_for('upload_media') }}"
     if (!attached || !empty) {
         return;
     }
@@ -266,7 +264,6 @@ const uploadUrl = "{{ url_for('upload_media') }}";
         attached.classList.add('d-none');
         empty.classList.remove('d-none');
     }
-}
 
 async function uploadMedia(mediaType) {
     const fileInput = document.getElementById(`${mediaType}_upload_input`);
@@ -325,7 +322,6 @@ async function uploadMedia(mediaType) {
         fileInput.value = '';
     }
 }
-  
 {% endif %}
 </script>
 {% endblock %}
