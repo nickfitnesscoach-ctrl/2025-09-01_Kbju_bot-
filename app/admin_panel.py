@@ -1,5 +1,7 @@
 """Flask-based admin panel for managing bot texts."""
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -7,28 +9,39 @@ import secrets
 import sys
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping
+
+import requests
+from dotenv import load_dotenv
+from flask import (
+    Flask,
+    abort,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from flask_wtf.csrf import CSRFProtect
+from requests import RequestException
+from werkzeug.security import check_password_hash, generate_password_hash
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import requests
-from dotenv import load_dotenv
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
-from flask_wtf.csrf import CSRFProtect
-from requests import RequestException
-from werkzeug.security import check_password_hash, generate_password_hash
 for env_path in (PROJECT_ROOT / ".env", CURRENT_DIR / ".env"):
     load_dotenv(env_path, override=False)
 
-from config import ADMIN_CHAT_ID, TELEGRAM_BOT_TOKEN
+from config import ADMIN_CHAT_ID, TELEGRAM_BOT_TOKEN  # noqa: E402  pylint: disable=wrong-import-position
 
 logger = logging.getLogger(__name__)
 
-TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
-TEXTS_FILE = os.path.join(os.path.dirname(__file__), "texts_data.json")
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
+TEXTS_FILE = CURRENT_DIR / "texts_data.json"
 
 
 def _load_secret_key() -> str:
@@ -50,16 +63,16 @@ def _load_password_hash() -> str:
     if plain_password:
         logger.warning(
             "ADMIN_PASSWORD is configured in plaintext; hashing at runtime. "
-            "Set ADMIN_PASSWORD_HASH to avoid storing secrets in clear text."
+            "Set ADMIN_PASSWORD_HASH to avoid storing secrets in clear text.",
         )
         return generate_password_hash(plain_password)
 
     raise RuntimeError(
-        "Admin panel password is not configured. Set ADMIN_PASSWORD_HASH environment variable."
+        "Admin panel password is not configured. Set ADMIN_PASSWORD_HASH environment variable.",
     )
 
 
-app = Flask(__name__, template_folder=TEMPLATES_DIR)
+app = Flask(__name__, template_folder=str(TEMPLATES_DIR))
 app.secret_key = _load_secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -70,19 +83,22 @@ csrf = CSRFProtect(app)
 PASSWORD_HASH = _load_password_hash()
 
 
-def load_texts():
+def load_texts() -> dict[str, Any]:
     """Load all bot texts from storage."""
     try:
-        with open(TEXTS_FILE, "r", encoding="utf-8") as fp:
+        with TEXTS_FILE.open("r", encoding="utf-8") as fp:
             return json.load(fp)
     except FileNotFoundError:
         logger.warning("Texts file %s not found; returning empty mapping", TEXTS_FILE)
         return {}
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse texts file %s: %s", TEXTS_FILE, exc)
+        raise RuntimeError("Файл текстов повреждён. Проверьте JSON.") from exc
 
 
-def save_texts(texts):
+def save_texts(texts: Mapping[str, Any]) -> None:
     """Persist bot texts to storage."""
-    with open(TEXTS_FILE, "w", encoding="utf-8") as fp:
+    with TEXTS_FILE.open("w", encoding="utf-8") as fp:
         json.dump(texts, fp, ensure_ascii=False, indent=2)
 
 
@@ -189,54 +205,26 @@ def _get_telegram_file_url(file_id: str | None) -> str | None:
     return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
 
 
-@app.route("/edit/<path:text_key>")
-@login_required
-def _get_telegram_file_url(file_id: str | None) -> str | None:
-    """Resolve direct download URL for a Telegram file."""
-
-    if not file_id or not TELEGRAM_BOT_TOKEN:
-        return None
-
-    endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile"
-
-    try:
-        response = requests.get(endpoint, params={"file_id": file_id}, timeout=15)
-    except RequestException as exc:
-        logger.debug("Failed to fetch file path for %s: %s", file_id, exc)
-        return None
-
-    try:
-        payload = response.json()
-    except ValueError:
-        logger.debug("Telegram getFile returned non-JSON response for %s", file_id)
-        return None
-
-    if not response.ok or not payload.get("ok"):
-        logger.debug("Telegram getFile failed for %s: %s", file_id, payload)
-        return None
-
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        return None
-
-    file_path = result.get("file_path")
-    if not isinstance(file_path, str):
-        return None
-
-    return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-
-
-def edit_text(text_key):
-    texts = load_texts()
-    keys = text_key.split(".")
-    value = texts
-
-    for key in keys:
+def _resolve_nested_value(texts: Mapping[str, Any], key_path: Iterable[str]) -> Any:
+    value: Any = texts
+    for key in key_path:
         if isinstance(value, dict) and key in value:
             value = value[key]
         else:
-            value = None
-            break
+            return None
+    return value
+
+
+@app.route("/edit/<path:text_key>")
+@login_required
+def edit_text(text_key: str):
+    texts = load_texts()
+    keys = text_key.split(".") if text_key else []
+    value = _resolve_nested_value(texts, keys)
+
+    if value is None:
+        flash("Указанный ключ не найден в JSON.", "error")
+        return redirect(url_for("index"))
 
     photo_preview_url = None
     video_preview_url = None
@@ -254,22 +242,32 @@ def edit_text(text_key):
     )
 
 
+def _ensure_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
+    value = parent.get(key)
+    if not isinstance(value, dict):
+        value = {}
+        parent[key] = value
+    return value
+
+
 @app.route("/save_text", methods=["POST"])
 @login_required
 def save_text():
-    text_key = request.form["text_key"]
+    text_key = request.form.get("text_key")
+    if not text_key:
+        abort(400, "text_key is required")
+
     text_content = request.form.get("text_content", "")
     is_message = request.form.get("is_message") == "1"
     photo_file_id = request.form.get("photo_file_id", "").strip()
     video_file_id = request.form.get("video_file_id", "").strip()
+
     texts = load_texts()
     keys = text_key.split(".")
-    current = texts
+    current: dict[str, Any] = texts
 
     for key in keys[:-1]:
-        if key not in current or not isinstance(current[key], dict):
-            current[key] = {}
-        current = current[key]
+        current = _ensure_dict(current, key)
 
     target_key = keys[-1]
 
@@ -293,6 +291,7 @@ def save_text():
         current[target_key] = target
     else:
         current[target_key] = text_content
+
     save_texts(texts)
     flash("Текст успешно сохранен", "success")
     return redirect(url_for("index"))
@@ -358,7 +357,9 @@ def upload_media():
         payload = response.json()
     except ValueError:
         logger.error(
-            "Telegram response for %s is not JSON. Status: %s", telegram_method, response.status_code
+            "Telegram response for %s is not JSON. Status: %s",
+            telegram_method,
+            response.status_code,
         )
         return (
             jsonify({"ok": False, "error": "Telegram вернул некорректный ответ."}),
@@ -368,7 +369,10 @@ def upload_media():
     if not response.ok or not payload.get("ok"):
         description = payload.get("description") if isinstance(payload, dict) else None
         logger.error(
-            "Telegram %s failed: status=%s, payload=%s", telegram_method, response.status_code, payload
+            "Telegram %s failed: status=%s, payload=%s",
+            telegram_method,
+            response.status_code,
+            payload,
         )
         message = "Не удалось загрузить файл в Telegram."
         if description:
@@ -377,17 +381,32 @@ def upload_media():
 
     file_id = _extract_file_id(media_type, payload.get("result"))
     if not file_id:
-        logger.error("Could not extract file_id from Telegram %s response: %s", telegram_method, payload)
+        logger.error(
+            "Could not extract file_id from Telegram %s response: %s",
+            telegram_method,
+            payload,
+        )
         return (
             jsonify({"ok": False, "error": "Не удалось получить file_id из ответа Telegram."}),
             502,
         )
-      
+
+    preview_url = _get_telegram_file_url(file_id)
+
     logger.info(
         "Uploaded %s for text '%s' with file_id=%s",
         media_type,
         request.form.get("text_key", "<unknown>"),
         file_id,
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "file_id": file_id,
+            "media_type": media_type,
+            "preview_url": preview_url,
+        }
     )
 
 
