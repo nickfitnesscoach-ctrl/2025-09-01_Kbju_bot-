@@ -76,10 +76,10 @@ class KBJUCalculator:
             # 1) Белок 2.0 г/кг
             proteins_out: int = round(weight * 2.0)
 
-            # 2) Жиры таргет 0.9 г/кг, но в разумных пределах и с учётом % калорий
-            fats_by_kg_target = weight * 0.9
-            fats_min_by_kg = weight * 0.8
-            fats_max_by_kg = weight * 1.0
+            # 2) Жиры таргет 1 г/кг, но в разумных пределах и с учётом % калорий
+            fats_by_kg_target = weight * 1.0
+            fats_min_by_kg = weight * 0.9
+            fats_max_by_kg = weight * 1.1
             fats_min_by_pct = calories_target * 0.20 / 9.0  # >=20% калорий
             fats_max_by_pct = calories_target * 0.35 / 9.0  # <=35% калорий
 
