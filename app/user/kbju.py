@@ -115,7 +115,9 @@ def get_advice_by_goal(goal: str) -> str:
     return get_text(f"advice.{goal}")
 
 
-async def calculate_and_save_kbju(user_id: int, user_data: dict[str, Any]) -> dict[str, int]:
+async def calculate_and_save_kbju(
+    user_id: int, user_data: dict[str, Any]
+) -> dict[str, int | str]:
     kbju = KBJUCalculator.calculate_kbju(
         gender=user_data["gender"],
         age=user_data["age"],
@@ -163,18 +165,31 @@ def _user_to_dict(user: Any) -> dict[str, Any]:
     }
 
 
-async def show_kbju_results(callback: CallbackQuery, kbju: dict[str, int], goal: str) -> None:
-    await callback.message.edit_text(
-        get_text(
-            "kbju_result",
-            goal_text=get_goal_description(goal),
-            calories=kbju["calories"],
-            proteins=kbju["proteins"],
-            fats=kbju["fats"],
-            carbs=kbju["carbs"],
-        ),
-        parse_mode="HTML",
+async def show_kbju_results(
+    callback: CallbackQuery, kbju: dict[str, int | str], goal: str
+) -> None:
+    result_text = get_text(
+        "kbju_result",
+        goal_text=get_goal_description(goal),
+        calories=kbju["calories"],
+        proteins=kbju["proteins"],
+        fats=kbju["fats"],
+        carbs=kbju["carbs"],
     )
+
+    if kbju.get("calories_adjusted_reason") == "carbs_min":
+        result_text = "\n\n".join(
+            [
+                result_text,
+                get_text(
+                    "kbju_result_calories_adjusted",
+                    calories=kbju["calories"],
+                    calories_initial=kbju.get("calories_initial", kbju["calories"]),
+                ),
+            ]
+        )
+
+    await callback.message.edit_text(result_text, parse_mode="HTML")
 
 
 async def send_delayed_offer(user_id: int, chat_id: int) -> None:
