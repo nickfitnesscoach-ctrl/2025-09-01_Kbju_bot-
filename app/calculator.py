@@ -1,6 +1,7 @@
 """
 Калькулятор КБЖУ для Fitness Bot
-Формула Миффлина—Сан Жеора + учёт ожирения (ABW) и правил по целям.
+Миффлин–Сан Жеор + учёт ожирения (ABW) и правил по целям.
+Все человеко-читабельные тексты берём из texts_data.json.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class KBJUCalculator:
-    # Активность
+    # 1) Активность (для TDEE)
     ACTIVITY_COEFFICIENTS: dict[str, float] = {
         "low": 1.2,
         "moderate": 1.375,
@@ -19,17 +20,18 @@ class KBJUCalculator:
         "very_high": 1.725,
     }
 
-    # Профицит/дефицит
+    # 2) Модификаторы цели
     GOAL_ADJUSTMENTS: dict[str, float] = {
         "weight_loss": -0.15,
         "maintenance": 0.0,
         "weight_gain": +0.15,
     }
 
-    # Полы калорий (только для похудения)
+    # 3) Калорийные «полы» для похудения
     CAL_FLOOR_MALE = 1600
     CAL_FLOOR_FEMALE = 1300
 
+    # ---------- базовые помощники ----------
     @staticmethod
     def calculate_bmr(gender: str, age: int, weight: float, height: int) -> float:
         if gender == "male":
@@ -48,12 +50,14 @@ class KBJUCalculator:
 
     @staticmethod
     def _abw(weight: float, ibw: float) -> float:
+        # Adjusted Body Weight для ожирения
         return ibw + 0.4 * (weight - ibw)
 
     @staticmethod
     def _clamp(x: float, lo: float, hi: float) -> float:
         return max(lo, min(hi, x))
 
+    # ---------- основной расчёт ----------
     @classmethod
     def calculate_kbju(
         cls,
@@ -65,6 +69,7 @@ class KBJUCalculator:
         goal: str,
     ) -> dict[str, int | str]:
 
+        # валидируем вход
         if gender not in {"male", "female"}:
             raise ValueError("gender_invalid")
         if activity not in cls.ACTIVITY_COEFFICIENTS:
@@ -72,33 +77,37 @@ class KBJUCalculator:
         if goal not in cls.GOAL_ADJUSTMENTS:
             raise ValueError("goal_invalid")
 
-        # Калории
+        # BMR → TDEE → целевые калории
         bmr = cls.calculate_bmr(gender, age, weight, height)
         tdee = bmr * cls.ACTIVITY_COEFFICIENTS[activity]
         calories_target = tdee * (1 + cls.GOAL_ADJUSTMENTS[goal])
         calories_initial = calories_target
         calories_adjusted_reason: str | None = None
 
-        # Ожирение → ABW
+        # ожирение → используем ABW для сушки
         bmi = cls._bmi(weight, height)
         ibw = cls._ibw_bmi25(height)
         use_abw = bool(bmi >= 30.0 or weight > ibw * 1.2)
-        base_wt_loss = cls._abw(weight, ibw) if use_abw else weight  # база для сушки
+        base_wt_loss = cls._abw(weight, ibw) if use_abw else weight
 
-        # ==== ЦЕЛИ ====
+        # ---- цели ----
         if goal == "weight_gain":
+            # Белок 2 г/кг (от текущего веса)
             proteins = round(weight * 2.0)
-            # жиры 1 г/кг с рамками 20–35% и 0.9–1.1 г/кг
+
+            # Жиры: таргет 1 г/кг, кламп 0.9–1.1 г/кг и 20–35% ккал
             fats_target = weight * 1.0
             fats_lo_gkg = weight * 0.9
             fats_hi_gkg = weight * 1.1
             fats_lo_pct = calories_target * 0.20 / 9.0
             fats_hi_pct = calories_target * 0.35 / 9.0
             fats = round(cls._clamp(fats_target, max(fats_lo_gkg, fats_lo_pct), min(fats_hi_gkg, fats_hi_pct)))
+
             # минимум жиров для женщин
             if gender == "female" and fats < 40:
                 fats = 40
-            # угли ≥ 4 г/кг
+
+            # Углеводы: остаток, но ≥ 4 г/кг. При нехватке — повышаем калории.
             carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
             carbs_min = round(weight * 4.0)
             if carbs < carbs_min:
@@ -107,33 +116,35 @@ class KBJUCalculator:
                 calories_adjusted_reason = "carbs_min_gain_4gkg"
 
         elif goal == "weight_loss":
-            # белок 2 г/кг от ABW/TBW
-            proteins = round(base_wt_loss * 2.0)
+            # Белок: женщины 1.5 г/кг, мужчины 2.0 г/кг (от ABW/TBW)
+            p_per_kg = 1.5 if gender == "female" else 2.0
+            proteins = round(base_wt_loss * p_per_kg)
 
-            # жиры 0.7–0.8 г/кг (ABW/TBW) с рамками 20–35%
+            # Жиры: таргет 0.75 г/кг, кламп 0.6–1.0 г/кг и 20–35% ккал
             fats_target = base_wt_loss * 0.75
             fats_lo_gkg = base_wt_loss * 0.6
             fats_hi_gkg = base_wt_loss * 1.0
             fats_lo_pct = calories_target * 0.20 / 9.0
             fats_hi_pct = calories_target * 0.35 / 9.0
             fats = round(cls._clamp(fats_target, max(fats_lo_gkg, fats_lo_pct), min(fats_hi_gkg, fats_hi_pct)))
+
             # минимум жиров для женщин
             if gender == "female" and fats < 40:
                 fats = 40
 
-            # угли: остаток, но ≥ max(1 г/кг base, 100 г)
+            # Углеводы: остаток, но жёсткий минимум 120 г
             carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
-            carbs_min = max(round(base_wt_loss * 1.0), 100)
+            carbs_min = 120
             if carbs < carbs_min:
                 carbs = carbs_min
                 calories_target = proteins * 4 + fats * 9 + carbs * 4
-                calories_adjusted_reason = "carbs_min_loss_1gkg_or_100"
+                calories_adjusted_reason = "carbs_min_loss_120g"
 
-            # пол калорий: 1600 муж / 1300 жен; добираем углями
+            # Пол калорий: 1600 муж / 1300 жен — добираем углями
             cal_floor = cls.CAL_FLOOR_MALE if gender == "male" else cls.CAL_FLOOR_FEMALE
             if calories_target < cal_floor:
-                need_carb_g = int((cal_floor - (proteins * 4 + fats * 9) + 3) // 4)  # ceil
-                carbs = max(carbs, carbs_min, need_carb_g)
+                need_carb_g = int((cal_floor - (proteins * 4 + fats * 9) + 3) // 4)  # ceil до грамм
+                carbs = max(carbs, need_carb_g)
                 calories_target = proteins * 4 + fats * 9 + carbs * 4
                 calories_adjusted_reason = (calories_adjusted_reason + "|cal_floor") if calories_adjusted_reason else "cal_floor"
 
@@ -148,13 +159,14 @@ class KBJUCalculator:
             carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
 
         else:
+            # fallback на случай будущих целей
             proteins = round(weight * 1.8)
             fats = round(calories_target * 0.25 / 9.0)
             if gender == "female" and fats < 40:
                 fats = 40
             carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
 
-        # ==== РЕЗУЛЬТАТ ====
+        # результат
         result: dict[str, int | str] = {
             "calories": int(round(calories_target)),
             "proteins": int(proteins),
@@ -170,6 +182,7 @@ class KBJUCalculator:
 
         return result
 
+    # ---------- валидация входа ----------
     @staticmethod
     def validate_user_data(
         gender: str, age: int, weight: float, height: int
@@ -185,8 +198,7 @@ class KBJUCalculator:
         return True, ""
 
 
-# ---- Текстовые описания (из JSON) ----
-
+# ---------- текстовые описания ----------
 def get_activity_description(activity: str) -> str:
     return get_text(f"activity_descriptions.{activity}")
 
