@@ -34,5 +34,5 @@ def main():
     except KeyboardInterrupt:
         print("\nАдмин-панель остановлена")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
