@@ -31,7 +31,7 @@ from app.keyboards import (
     priority_keyboard,
 )
 from app.states import KBJUStates
-from app.texts import get_button_text, get_text
+from app.texts import get_button_text, get_media_id, get_text
 from app.webhook import TimerService, WebhookService
 from config import CHANNEL_URL
 
@@ -549,8 +549,21 @@ async def process_priority(callback: CallbackQuery) -> None:
         priority=priority,
     )
 
+    offer_text = get_text("consultation_offer")
+    photo_id = get_media_id("consultation_offer.photo_file_id")
+
+    if photo_id:
+        try:
+            await callback.message.answer_photo(photo=photo_id)
+        except Exception as exc:  # noqa: BLE001 - optional media
+            logger.warning(
+                "Failed to send consultation offer photo for user %s: %s",
+                callback.from_user.id,
+                exc,
+            )
+
     await callback.message.edit_text(
-        get_text("consultation_offer"),
+        offer_text,
         reply_markup=consultation_contact_keyboard(),
         parse_mode="HTML",
     )
