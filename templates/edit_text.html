@@ -61,6 +61,22 @@
                                     value="{{ text_data.get('photo_file_id', '') }}"
                                 >
                                 <div class="form-text">Оставьте пустым, чтобы удалить фото.</div>
+                                <div class="mt-2">
+                                    <label for="photo_upload_input" class="form-label">Или загрузите новое фото:</label>
+                                    <div class="input-group">
+                                        <input type="file" class="form-control" id="photo_upload_input" accept="image/*">
+                                        <button
+                                            type="button"
+                                            class="btn btn-outline-primary"
+                                            id="photo_upload_button"
+                                            onclick="uploadMedia('photo')"
+                                        >
+                                            Загрузить
+                                        </button>
+                                    </div>
+                                    <div class="form-text">Файл отправится в Telegram и вернёт готовый file_id.</div>
+                                    <div class="small text-muted mt-1" id="photo_upload_status"></div>
+                                </div>
                             </div>
                             <div class="col-md-6">
                                 <label for="video_file_id" class="form-label">Добавить видео к посту</label>
@@ -73,6 +89,22 @@
                                     value="{{ text_data.get('video_file_id', '') }}"
                                 >
                                 <div class="form-text">Оставьте пустым, чтобы удалить видео.</div>
+                                <div class="mt-2">
+                                    <label for="video_upload_input" class="form-label">Или загрузите новое видео:</label>
+                                    <div class="input-group">
+                                        <input type="file" class="form-control" id="video_upload_input" accept="video/*">
+                                        <button
+                                            type="button"
+                                            class="btn btn-outline-primary"
+                                            id="video_upload_button"
+                                            onclick="uploadMedia('video')"
+                                        >
+                                            Загрузить
+                                        </button>
+                                    </div>
+                                    <div class="form-text">После загрузки file_id заполнится автоматически.</div>
+                                    <div class="small text-muted mt-1" id="video_upload_status"></div>
+                                </div>
                             </div>
                         </div>
                     {% endif %}
@@ -103,18 +135,32 @@
                         {% set current_video = (text_data.get('video_file_id', '') | default('')) if is_message else '' %}
                         <ul class="small mb-0">
                             <li>
-                                {% if current_photo %}
-                                    📷 Фото: <code>{{ current_photo }}</code>
-                                {% else %}
-                                    <span class="text-muted">Фото не прикреплено</span>
-                                {% endif %}
+                                <span
+                                    id="photo_preview_attached"
+                                    class="{% if not current_photo %}d-none{% endif %}"
+                                >
+                                    📷 Фото: <code id="photo_preview_code">{{ current_photo }}</code>
+                                </span>
+                                <span
+                                    id="photo_preview_empty"
+                                    class="text-muted {% if current_photo %}d-none{% endif %}"
+                                >
+                                    Фото не прикреплено
+                                </span>
                             </li>
                             <li>
-                                {% if current_video %}
-                                    🎬 Видео: <code>{{ current_video }}</code>
-                                {% else %}
-                                    <span class="text-muted">Видео не прикреплено</span>
-                                {% endif %}
+                                <span
+                                    id="video_preview_attached"
+                                    class="{% if not current_video %}d-none{% endif %}"
+                                >
+                                    🎬 Видео: <code id="video_preview_code">{{ current_video }}</code>
+                                </span>
+                                <span
+                                    id="video_preview_empty"
+                                    class="text-muted {% if current_video %}d-none{% endif %}"
+                                >
+                                    Видео не прикреплено
+                                </span>
                             </li>
                         </ul>
                     </div>
@@ -138,17 +184,112 @@
 
 <script>
 // Предварительный просмотр в реальном времени
-document.getElementById('text_content').addEventListener('input', function() {
-    const preview = document.getElementById('preview');
-    let text = this.value;
-    
-    // Простая замена HTML тегов для предварительного просмотра
-    text = text.replace(/<b>(.*?)<\/b>/g, '<strong>$1</strong>');
-    text = text.replace(/<i>(.*?)<\/i>/g, '<em>$1</em>');
-    text = text.replace(/<code>(.*?)<\/code>/g, '<code>$1</code>');
-    text = text.replace(/\n/g, '<br>');
-    
-    preview.innerHTML = text;
-});
+const textContentElement = document.getElementById('text_content');
+if (textContentElement) {
+    textContentElement.addEventListener('input', function() {
+        const preview = document.getElementById('preview');
+        if (!preview) {
+            return;
+        }
+
+        let text = this.value;
+
+        // Простая замена HTML тегов для предварительного просмотра
+        text = text.replace(/<b>(.*?)<\/b>/g, '<strong>$1</strong>');
+        text = text.replace(/<i>(.*?)<\/i>/g, '<em>$1</em>');
+        text = text.replace(/<code>(.*?)<\/code>/g, '<code>$1</code>');
+        text = text.replace(/\n/g, '<br>');
+
+        preview.innerHTML = text;
+    });
+}
+
+{% if is_message %}
+const csrfInput = document.querySelector('input[name="csrf_token"]');
+const uploadUrl = "{{ url_for('upload_media') }}";
+
+function updatePreview(mediaType, fileId) {
+    const attached = document.getElementById(`${mediaType}_preview_attached`);
+    const empty = document.getElementById(`${mediaType}_preview_empty`);
+    const code = document.getElementById(`${mediaType}_preview_code`);
+
+    if (!attached || !empty) {
+        return;
+    }
+
+    if (fileId) {
+        if (code) {
+            code.textContent = fileId;
+        }
+        attached.classList.remove('d-none');
+        empty.classList.add('d-none');
+    } else {
+        if (code) {
+            code.textContent = '';
+        }
+        attached.classList.add('d-none');
+        empty.classList.remove('d-none');
+    }
+}
+
+async function uploadMedia(mediaType) {
+    const fileInput = document.getElementById(`${mediaType}_upload_input`);
+    const statusElement = document.getElementById(`${mediaType}_upload_status`);
+    const targetInput = document.getElementById(`${mediaType}_file_id`);
+    const uploadButton = document.getElementById(`${mediaType}_upload_button`);
+
+    if (!fileInput || !statusElement || !targetInput || !uploadButton) {
+        return;
+    }
+
+    const file = fileInput.files[0];
+    if (!file) {
+        statusElement.textContent = 'Сначала выберите файл.';
+        statusElement.className = 'small text-danger mt-1';
+        return;
+    }
+
+    const csrfToken = csrfInput ? csrfInput.value : '';
+    const formData = new FormData();
+    formData.append('media_type', mediaType);
+    formData.append('media', file);
+    formData.append('text_key', '{{ text_key }}');
+    if (csrfToken) {
+        formData.append('csrf_token', csrfToken);
+    }
+
+    statusElement.textContent = 'Загружаем файл в Telegram...';
+    statusElement.className = 'small text-muted mt-1';
+    uploadButton.disabled = true;
+    fileInput.disabled = true;
+
+    try {
+        const response = await fetch(uploadUrl, {
+            method: 'POST',
+            body: formData,
+        });
+
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data || !data.ok) {
+            const errorMessage = data && data.error ? data.error : 'Не удалось загрузить файл.';
+            statusElement.textContent = errorMessage;
+            statusElement.className = 'small text-danger mt-1';
+            return;
+        }
+
+        targetInput.value = data.file_id;
+        updatePreview(mediaType, data.file_id);
+        statusElement.textContent = 'Файл загружен. file_id подставлен автоматически.';
+        statusElement.className = 'small text-success mt-1';
+    } catch (error) {
+        statusElement.textContent = 'Ошибка соединения. Попробуйте ещё раз.';
+        statusElement.className = 'small text-danger mt-1';
+    } finally {
+        uploadButton.disabled = false;
+        fileInput.disabled = false;
+        fileInput.value = '';
+    }
+}
+{% endif %}
 </script>
 {% endblock %}
