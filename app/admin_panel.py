@@ -349,16 +349,12 @@ def upload_media():
             502,
         )
 
-    preview_url = _get_telegram_file_url(file_id)
-
     logger.info(
         "Uploaded %s for text '%s' with file_id=%s",
         media_type,
         request.form.get("text_key", "<unknown>"),
         file_id,
     )
-    return jsonify({"ok": True, "file_id": file_id, "preview_url": preview_url})
-
 
 @app.route("/health")
 def health():
