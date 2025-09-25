@@ -525,15 +525,41 @@ async def process_lead_request(callback: CallbackQuery) -> None:
                 exc,
             )
 
-    await callback.message.edit_text(
-        get_text(
-            "hot_lead_success",
-            user_id=callback.from_user.id,
-            username=callback.from_user.username or get_text("fallbacks.username_unknown"),
-        ),
-        reply_markup=back_to_menu(),
-        parse_mode="HTML",
+    success_text = get_text(
+        "hot_lead_success",
+        user_id=callback.from_user.id,
+        username=callback.from_user.username or get_text("fallbacks.username_unknown"),
     )
+    reply_markup = back_to_menu()
+
+    async def _send_success_message() -> None:
+        try:
+            await callback.message.edit_reply_markup()
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(
+            success_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+
+    try:
+        if callback.message.text:
+            await callback.message.edit_text(
+                success_text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+        elif callback.message.caption:
+            await callback.message.edit_caption(
+                success_text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+        else:
+            await _send_success_message()
+    except TelegramBadRequest:
+        await _send_success_message()
     await callback.answer()
 
 
