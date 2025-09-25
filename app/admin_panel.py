@@ -4,16 +4,24 @@ import json
 import logging
 import os
 import secrets
+import sys
 from functools import wraps
 from pathlib import Path
-
-from dotenv import load_dotenv
-from flask import Flask, flash, redirect, render_template, request, session, url_for
-from flask_wtf.csrf import CSRFProtect
-from werkzeug.security import check_password_hash, generate_password_hash
+from typing import Any
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+import requests
+from dotenv import load_dotenv
+from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask_wtf.csrf import CSRFProtect
+from requests import RequestException
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from config import ADMIN_CHAT_ID, TELEGRAM_BOT_TOKEN
 
 for env_path in (PROJECT_ROOT / ".env", CURRENT_DIR / ".env"):
     load_dotenv(env_path, override=False)
@@ -79,6 +87,30 @@ def save_texts(texts):
         json.dump(texts, fp, ensure_ascii=False, indent=2)
 
 
+def _extract_file_id(media_type: str, result_payload: Any) -> str | None:
+    """Получить file_id из ответа Telegram в зависимости от типа медиа."""
+
+    if not isinstance(result_payload, dict):
+        return None
+
+    if media_type == "photo":
+        photos = result_payload.get("photo")
+        if isinstance(photos, list) and photos:
+            last_photo = photos[-1]
+            if isinstance(last_photo, dict):
+                file_id = last_photo.get("file_id")
+                if isinstance(file_id, str):
+                    return file_id
+        return None
+
+    video = result_payload.get("video")
+    if isinstance(video, dict):
+        file_id = video.get("file_id")
+        if isinstance(file_id, str):
+            return file_id
+    return None
+
+
 def login_required(func):
     """Ensure the user is authenticated before accessing the view."""
 
@@ -125,6 +157,41 @@ def logout():
 
 @app.route("/edit/<path:text_key>")
 @login_required
+def _get_telegram_file_url(file_id: str | None) -> str | None:
+    """Resolve direct download URL for a Telegram file."""
+
+    if not file_id or not TELEGRAM_BOT_TOKEN:
+        return None
+
+    endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile"
+
+    try:
+        response = requests.get(endpoint, params={"file_id": file_id}, timeout=15)
+    except RequestException as exc:
+        logger.debug("Failed to fetch file path for %s: %s", file_id, exc)
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.debug("Telegram getFile returned non-JSON response for %s", file_id)
+        return None
+
+    if not response.ok or not payload.get("ok"):
+        logger.debug("Telegram getFile failed for %s: %s", file_id, payload)
+        return None
+
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return None
+
+    file_path = result.get("file_path")
+    if not isinstance(file_path, str):
+        return None
+
+    return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+
+
 def edit_text(text_key):
     texts = load_texts()
     keys = text_key.split(".")
@@ -137,7 +204,20 @@ def edit_text(text_key):
             value = None
             break
 
-    return render_template("edit_text.html", text_key=text_key, text_data=value)
+    photo_preview_url = None
+    video_preview_url = None
+
+    if isinstance(value, dict):
+        photo_preview_url = _get_telegram_file_url(value.get("photo_file_id"))
+        video_preview_url = _get_telegram_file_url(value.get("video_file_id"))
+
+    return render_template(
+        "edit_text.html",
+        text_key=text_key,
+        text_data=value,
+        photo_preview_url=photo_preview_url,
+        video_preview_url=video_preview_url,
+    )
 
 
 @app.route("/save_text", methods=["POST"])
@@ -182,6 +262,102 @@ def save_text():
     save_texts(texts)
     flash("Текст успешно сохранен", "success")
     return redirect(url_for("index"))
+
+
+@app.route("/upload_media", methods=["POST"])
+@login_required
+def upload_media():
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("Cannot upload media: TELEGRAM_BOT_TOKEN is not configured")
+        return (
+            jsonify({"ok": False, "error": "Не настроен токен бота для загрузки файлов."}),
+            500,
+        )
+
+    if ADMIN_CHAT_ID is None:
+        logger.error("Cannot upload media: ADMIN_CHAT_ID is not configured")
+        return (
+            jsonify({"ok": False, "error": "Не указан ADMIN_CHAT_ID для загрузки файлов."}),
+            500,
+        )
+
+    media_type = request.form.get("media_type", "")
+    if media_type not in {"photo", "video"}:
+        return jsonify({"ok": False, "error": "Неверный тип медиа."}), 400
+
+    file = request.files.get("media")
+    if file is None or not file.filename:
+        return jsonify({"ok": False, "error": "Выберите файл для загрузки."}), 400
+
+    telegram_method = "sendPhoto" if media_type == "photo" else "sendVideo"
+    telegram_field = "photo" if media_type == "photo" else "video"
+    endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{telegram_method}"
+
+    if hasattr(file, "stream"):
+        try:
+            file.stream.seek(0)
+        except OSError:
+            logger.debug("Unable to seek upload stream for %s", file.filename)
+
+    files = {
+        telegram_field: (
+            file.filename or f"{media_type}.bin",
+            file.stream,
+            file.mimetype or "application/octet-stream",
+        )
+    }
+    data = {
+        "chat_id": str(ADMIN_CHAT_ID),
+        "disable_notification": "true",
+    }
+
+    try:
+        response = requests.post(endpoint, data=data, files=files, timeout=30)
+    except RequestException as exc:
+        logger.error("Failed to send %s to Telegram: %s", media_type, exc)
+        return (
+            jsonify({"ok": False, "error": "Не удалось загрузить файл. Попробуйте позже."}),
+            502,
+        )
+
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.error(
+            "Telegram response for %s is not JSON. Status: %s", telegram_method, response.status_code
+        )
+        return (
+            jsonify({"ok": False, "error": "Telegram вернул некорректный ответ."}),
+            502,
+        )
+
+    if not response.ok or not payload.get("ok"):
+        description = payload.get("description") if isinstance(payload, dict) else None
+        logger.error(
+            "Telegram %s failed: status=%s, payload=%s", telegram_method, response.status_code, payload
+        )
+        message = "Не удалось загрузить файл в Telegram."
+        if description:
+            message = f"{message} {description}"
+        return jsonify({"ok": False, "error": message}), 502
+
+    file_id = _extract_file_id(media_type, payload.get("result"))
+    if not file_id:
+        logger.error("Could not extract file_id from Telegram %s response: %s", telegram_method, payload)
+        return (
+            jsonify({"ok": False, "error": "Не удалось получить file_id из ответа Telegram."}),
+            502,
+        )
+
+    preview_url = _get_telegram_file_url(file_id)
+
+    logger.info(
+        "Uploaded %s for text '%s' with file_id=%s",
+        media_type,
+        request.form.get("text_key", "<unknown>"),
+        file_id,
+    )
+    return jsonify({"ok": True, "file_id": file_id, "preview_url": preview_url})
 
 
 @app.route("/health")
