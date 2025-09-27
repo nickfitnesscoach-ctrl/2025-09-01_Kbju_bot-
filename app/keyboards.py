@@ -44,15 +44,6 @@ def funnel_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-# Приоритеты для горячих лидов
-def priority_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_button_text("priority_nutrition"), callback_data="priority_nutrition")],
-        [InlineKeyboardButton(text=get_button_text("priority_training"),  callback_data="priority_training")],
-        [InlineKeyboardButton(text=get_button_text("priority_schedule"),  callback_data="priority_schedule")],
-    ])
-
-
 # Клавиатура профиля пользователя
 def profile_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
