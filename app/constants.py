@@ -19,8 +19,6 @@ LEADS_DEFAULT_WINDOW = "all"
 PRIORITY_SCORES = {
     'consultation_request': 100,  # Максимальный приоритет для заявок на консультацию
     'hotlead_delayed': 80,        # Высокий приоритет для отложенных горячих лидов
-    'coldlead_delayed': 10,       # Низкий приоритет для холодных лидов
-    'coldlead': 5,                # Минимальный приоритет для обычных холодных лидов
     'new': 0                      # Базовый приоритет для новых пользователей
 }
 
@@ -38,11 +36,9 @@ DB_OPERATION_TIMEOUT = 10.0  # seconds
 # Статусы воронки лидов
 FUNNEL_STATUSES = {
     'new': 'new',
-    'calculated': 'calculated', 
+    'calculated': 'calculated',
     'hotlead_consultation': 'hotlead_consultation',
-    'hotlead_delayed': 'hotlead_delayed',
-    'coldlead_delayed': 'coldlead_delayed',
-    'coldlead': 'coldlead'
+    'hotlead_delayed': 'hotlead_delayed'
 }
 
 # Приоритеты пользователей

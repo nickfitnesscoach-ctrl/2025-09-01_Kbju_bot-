@@ -234,7 +234,7 @@ async def _process_candidate(bot: Bot, candidate: DripCandidate) -> None:
         _log_verdict(candidate, f"skip (hotlead) status={status}")
         return
 
-    eligible = status in {"new", "calculated"} or status.startswith("coldlead")
+    eligible = status in {"new", "calculated"}
     if not eligible:
         _log_verdict(candidate, f"skip (status-not-eligible) status={status or 'unknown'}")
         return
@@ -323,7 +323,6 @@ async def _load_candidates() -> tuple[Sequence[DripCandidate], str]:
             or_(
                 status_expr == "new",
                 status_expr == "calculated",
-                status_expr.like("coldlead%"),
             ),
             not_(status_expr.like("hotlead%")),
         )

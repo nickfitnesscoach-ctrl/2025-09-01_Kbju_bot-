@@ -41,7 +41,6 @@ def goal_keyboard() -> InlineKeyboardMarkup:
 def funnel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_button_text("ready_to_work"), callback_data="funnel_hot")],
-        [InlineKeyboardButton(text=get_button_text("want_advice"),   callback_data="funnel_cold")],
     ])
 
 
@@ -75,7 +74,6 @@ def admin_menu() -> InlineKeyboardMarkup:
 def delayed_offer_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_button_text("delayed_yes"), callback_data="delayed_yes")],
-        [InlineKeyboardButton(text=get_button_text("delayed_no"),  callback_data="delayed_no")],
     ])
 
 
