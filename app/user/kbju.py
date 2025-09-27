@@ -595,7 +595,3 @@ async def process_priority(callback: CallbackQuery) -> None:
         )
 
     await callback.answer()
-
-
-@rate_limit
-@error_handler
