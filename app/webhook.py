@@ -173,12 +173,6 @@ class WebhookService:
         return await send_lead(payload, "hot_lead")
 
     @staticmethod
-    async def send_cold_lead(user_data: Mapping[str, Any]):
-        payload: Dict[str, Any] = dict(user_data)
-        payload["funnel_status"] = "coldlead"
-        return await send_lead(payload, "cold_lead")
-
-    @staticmethod
     async def send_calculated_lead(user_data: Mapping[str, Any]):
         payload: Dict[str, Any] = dict(user_data)
         payload["funnel_status"] = "calculated"
@@ -231,7 +225,7 @@ class TimerService:
         if normalized == "calculated":
             return True
 
-        return normalized.startswith("hotlead") or normalized.startswith("coldlead")
+        return normalized.startswith("hotlead")
 
     @classmethod
     async def start_stalled_timer(

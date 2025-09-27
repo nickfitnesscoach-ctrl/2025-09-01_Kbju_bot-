@@ -35,7 +35,6 @@ from app.states import KBJUStates
 from app.texts import get_button_text, get_media_id, get_optional_text, get_text
 from app.utils import CAPTION_LIMIT, split_html_by_len, strip_html
 from app.webhook import TimerService, WebhookService
-from config import CHANNEL_URL
 
 from .shared import error_handler, rate_limit, safe_db_operation, sanitize_text, track_user_activity
 
@@ -64,10 +63,8 @@ def register(router: Router) -> None:
     router.callback_query.register(process_activity, F.data.startswith("activity_"))
     router.callback_query.register(process_goal, F.data.startswith("goal_"))
     router.callback_query.register(process_delayed_yes, F.data == "delayed_yes")
-    router.callback_query.register(process_delayed_no, F.data == "delayed_no")
     router.callback_query.register(process_lead_request, F.data == "send_lead")
     router.callback_query.register(process_priority, F.data.startswith("priority_"))
-    router.callback_query.register(process_cold_lead, F.data == "funnel_cold")
 
 
 async def start_funnel_timer(user_id: int) -> None:
@@ -109,10 +106,6 @@ async def _start_kbju_flow_inner(callback: CallbackQuery) -> None:
 
 def _activity_label_from_buttons(raw: str) -> str:
     return get_button_text(f"activity_{raw}")
-
-
-def get_advice_by_goal(goal: str) -> str:
-    return get_text(f"advice.{goal}")
 
 
 async def calculate_and_save_kbju(
@@ -472,38 +465,6 @@ async def process_delayed_yes(callback: CallbackQuery) -> None:
 
 @rate_limit
 @error_handler
-@track_user_activity("process_delayed_no")
-async def process_delayed_no(callback: CallbackQuery) -> None:
-    if not (callback.from_user and callback.message):
-        return
-
-    await _cancel_stalled_reminder(callback.from_user.id)
-    await update_user_status(
-        tg_id=callback.from_user.id,
-        status=FUNNEL_STATUSES["coldlead_delayed"],
-        priority_score=PRIORITY_SCORES["coldlead_delayed"],
-    )
-
-    user_data = await get_user(callback.from_user.id)
-    if user_data:
-        await WebhookService.send_cold_lead(_user_to_dict(user_data))
-
-    advice_text = get_advice_by_goal(user_data.goal if user_data else "maintenance")
-
-    await callback.message.edit_text(
-        get_text(
-            "cold_lead_advice",
-            advice_text=advice_text,
-            channel_url=CHANNEL_URL or get_text("defaults.channel_username"),
-        ),
-        reply_markup=back_to_menu(),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@rate_limit
-@error_handler
 @track_user_activity("process_lead_request")
 async def process_lead_request(callback: CallbackQuery) -> None:
     if not (callback.from_user and callback.message):
@@ -638,38 +599,3 @@ async def process_priority(callback: CallbackQuery) -> None:
 
 @rate_limit
 @error_handler
-@track_user_activity("process_cold_lead")
-async def process_cold_lead(callback: CallbackQuery) -> None:
-    if not (callback.from_user and callback.message):
-        return
-
-    try:
-        TimerService.cancel_timer(callback.from_user.id)
-    except Exception:
-        pass
-    await _cancel_stalled_reminder(callback.from_user.id)
-
-    await update_user_status(
-        tg_id=callback.from_user.id,
-        status=FUNNEL_STATUSES["coldlead"],
-        priority_score=PRIORITY_SCORES["coldlead"],
-    )
-
-    user_data = await get_user(callback.from_user.id)
-    if user_data:
-        await WebhookService.send_cold_lead(_user_to_dict(user_data))
-
-    advice_text = get_advice_by_goal(user_data.goal if user_data else "maintenance")
-
-    await callback.message.edit_text(
-        get_text(
-            "cold_lead_advice",
-            advice_text=advice_text,
-            channel_url=CHANNEL_URL or get_text("defaults.channel_username"),
-        ),
-        reply_markup=back_to_menu(),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
