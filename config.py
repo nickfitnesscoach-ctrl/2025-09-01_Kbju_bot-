@@ -86,14 +86,8 @@ _DRIP_INTERVAL = _int(
 )
 DRIP_CHECK_INTERVAL_SEC = _DRIP_INTERVAL if _DRIP_INTERVAL is not None else 600
 
-_DRIP_24 = _int(os.getenv("DRIP_24H_MIN"), field_name="DRIP_24H_MIN")
-DRIP_24H_MIN = _DRIP_24 if _DRIP_24 is not None else 1440
-
-_DRIP_48 = _int(os.getenv("DRIP_48H_MIN"), field_name="DRIP_48H_MIN")
-DRIP_48H_MIN = _DRIP_48 if _DRIP_48 is not None else 2880
-
-_DRIP_72 = _int(os.getenv("DRIP_72H_MIN"), field_name="DRIP_72H_MIN")
-DRIP_72H_MIN = _DRIP_72 if _DRIP_72 is not None else 4320
+_DRIP_STAGE_1 = _int(os.getenv("DRIP_STAGE_1_MIN"), field_name="DRIP_STAGE_1_MIN")
+DRIP_STAGE_1_MIN = _DRIP_STAGE_1 if _DRIP_STAGE_1 is not None else 60
 
 _missing_required: list[str] = []
 if not TELEGRAM_BOT_TOKEN:
@@ -130,14 +124,12 @@ def log_drip_configuration(
 
     active_logger.info(
         "DRIP: enabled=%s | pid=%s | worker_state=%s | interval_sec=%s | "
-        "thresholds_min=(24h=%s, 48h=%s, 72h=%s)",
+        "thresholds_min=(stage1=%s)",
         ENABLE_DRIP_FOLLOWUPS,
         os.getpid(),
         worker_state,
         DRIP_CHECK_INTERVAL_SEC,
-        DRIP_24H_MIN,
-        DRIP_48H_MIN,
-        DRIP_72H_MIN,
+        DRIP_STAGE_1_MIN,
     )
 
 

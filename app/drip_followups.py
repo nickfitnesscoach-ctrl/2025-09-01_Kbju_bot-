@@ -10,24 +10,31 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import func, not_, or_, select
 
 from app.database.models import User, async_session
 from app.database.requests import update_drip_stage
-from app.texts import get_media_id, get_text
+from app.texts import get_button_text, get_media_id, get_optional_text, get_text
 from app.utils import CAPTION_LIMIT, strip_html
-from config import (
-    DRIP_24H_MIN,
-    DRIP_48H_MIN,
-    DRIP_72H_MIN,
-    DRIP_CHECK_INTERVAL_SEC,
-    ENABLE_DRIP_FOLLOWUPS,
-)
+from config import DRIP_CHECK_INTERVAL_SEC, DRIP_STAGE_1_MIN, ENABLE_DRIP_FOLLOWUPS
 
 logger = logging.getLogger(__name__)
 
-_STAGE_LABELS = {1: "24h", 2: "48h", 3: "72h"}
-_STAGE_THRESHOLDS = {1: DRIP_24H_MIN, 2: DRIP_48H_MIN, 3: DRIP_72H_MIN}
+_STAGE_LABELS = {1: "1h"}
+_STAGE_THRESHOLDS = {1: DRIP_STAGE_1_MIN}
+
+
+@dataclass(slots=True)
+class StageContent:
+    base_key: str
+    text: str
+    photo_id: str | None
+    video_id: str | None
+    image_url: str | None
+    button_text: str | None
+    button_callback: str | None
+    button_url: str | None
 
 
 @dataclass(slots=True)
@@ -84,8 +91,6 @@ def _threshold_for_stage(stage: int) -> int:
 def _next_stage(current_stage: int) -> int | None:
     if current_stage is None:
         current_stage = 0
-    if current_stage >= 3:
-        return None
     target_stage = current_stage + 1
     if target_stage not in _STAGE_THRESHOLDS:
         return None
@@ -99,54 +104,69 @@ def _minutes_since(reference: datetime | None) -> float | None:
     return delta.total_seconds() / 60.0
 
 
-def _stage_text_candidates(stage: int, gender: str | None) -> Iterable[str]:
-    base_key = {1: "drip.case_24h", 2: "drip.case_48h", 3: "drip.case_72h"}.get(stage)
-    if not base_key:
-        return []
-
-    normalized_gender = (gender or "").strip().lower()
-    candidates: list[str] = []
-
-    if stage in (1, 2):
-        if normalized_gender in {"male", "female"}:
-            candidates.append(f"{base_key}.{normalized_gender}.text")
-        candidates.extend(
-            key
-            for key in (
-                f"{base_key}.any.text",
-                f"{base_key}.male.text",
-                f"{base_key}.female.text",
-            )
-            if key not in candidates
-        )
-    else:
-        candidates.append(f"{base_key}.any.text")
-        candidates.append(f"{base_key}.text")
-
-    return candidates
+def _stage_base_keys(stage: int, status: str | None) -> Iterable[str]:
+    normalized_status = (status or "").strip().lower()
+    base_keys: list[str] = []
+    if normalized_status:
+        base_keys.append(f"drip.{normalized_status}.stage_{stage}")
+    base_keys.append(f"drip.any.stage_{stage}")
+    return base_keys
 
 
-def _choose_stage_text(stage: int, gender: str | None) -> tuple[str | None, str | None]:
-    for key in _stage_text_candidates(stage, gender):
-        text = get_text(key)
+def _choose_stage_content(stage: int, status: str | None) -> StageContent | None:
+    for base_key in _stage_base_keys(stage, status):
+        text = get_text(f"{base_key}.text")
         if text.startswith("[Текст не найден"):
             continue
-        return text, key
-    return None, None
+
+        photo_id = get_media_id(f"{base_key}.photo_file_id")
+        video_id = get_media_id(f"{base_key}.video_file_id")
+        image_url = get_media_id(f"{base_key}.image_url")
+
+        button_text = get_optional_text(f"{base_key}.button_text")
+        button_text_key = get_optional_text(f"{base_key}.button_text_key")
+        if not button_text and button_text_key:
+            button_text = get_button_text(button_text_key)
+        button_callback = get_optional_text(f"{base_key}.button_callback")
+        button_url = get_optional_text(f"{base_key}.button_url")
+
+        return StageContent(
+            base_key=base_key,
+            text=text,
+            photo_id=photo_id,
+            video_id=video_id,
+            image_url=image_url,
+            button_text=button_text,
+            button_callback=button_callback,
+            button_url=button_url,
+        )
+
+    return None
 
 
-async def _send_stage(bot: Bot, candidate: DripCandidate, stage: int) -> tuple[bool, str | None, str | None]:
-    text, key = _choose_stage_text(stage, candidate.gender)
-    if not text:
-        return False, key, "template-not-found"
+async def _send_stage(
+    bot: Bot,
+    candidate: DripCandidate,
+    stage: int,
+    content: StageContent,
+) -> tuple[bool, str | None, str | None]:
+    reply_markup: InlineKeyboardMarkup | None = None
+    button_text = content.button_text
+    if button_text:
+        if content.button_url:
+            button = InlineKeyboardButton(text=button_text, url=content.button_url)
+        elif content.button_callback:
+            button = InlineKeyboardButton(
+                text=button_text,
+                callback_data=content.button_callback,
+            )
+        else:
+            button = None
+        if button:
+            reply_markup = InlineKeyboardMarkup(inline_keyboard=[[button]])
 
-    base_key = key.rsplit(".", 1)[0] if key else None
-    photo_id = get_media_id(f"{base_key}.photo_file_id") if base_key else None
-    video_id = get_media_id(f"{base_key}.video_file_id") if base_key else None
-    image_url = get_media_id(f"{base_key}.image_url") if base_key else None
-
-    if base_key == "drip.case_72h.any" and (photo_id or image_url):
-        caption_length = len(strip_html(text))
+    if content.photo_id or content.image_url:
+        caption_length = len(strip_html(content.text))
         if caption_length > CAPTION_LIMIT:
             logger.warning(
                 "DRIP caption too long | user=%s | stage=%s | length=%s | limit=%s",
@@ -156,17 +176,18 @@ async def _send_stage(bot: Bot, candidate: DripCandidate, stage: int) -> tuple[b
                 CAPTION_LIMIT,
             )
         else:
-            media_id = photo_id or image_url
+            media_id = content.photo_id or content.image_url
             try:
                 await bot.send_photo(
                     chat_id=candidate.tg_id,
                     photo=media_id,
-                    caption=text,
+                    caption=content.text,
                     parse_mode="HTML",
+                    reply_markup=reply_markup,
                 )
-            except asyncio.CancelledError:  # pragma: no cover - cooperates with shutdown
+            except asyncio.CancelledError:  # pragma: no cover
                 raise
-            except Exception as exc:  # noqa: BLE001 - fall back to legacy flow
+            except Exception as exc:  # noqa: BLE001 - fall back to text
                 logger.warning(
                     "DRIP photo with caption send failed | user=%s | stage=%s | error=%s",
                     candidate.tg_id,
@@ -174,39 +195,44 @@ async def _send_stage(bot: Bot, candidate: DripCandidate, stage: int) -> tuple[b
                     exc,
                 )
             else:
-                return True, key, None
+                return True, content.base_key + ".text", None
+
+    if content.photo_id and not reply_markup:
+        try:
+            await bot.send_photo(chat_id=candidate.tg_id, photo=content.photo_id)
+        except asyncio.CancelledError:  # pragma: no cover
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "DRIP photo send failed | user=%s | stage=%s | error=%s",
+                candidate.tg_id,
+                stage,
+                exc,
+            )
+
+    if content.video_id:
+        try:
+            await bot.send_video(chat_id=candidate.tg_id, video=content.video_id)
+        except asyncio.CancelledError:  # pragma: no cover
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "DRIP video send failed | user=%s | stage=%s | error=%s",
+                candidate.tg_id,
+                stage,
+                exc,
+            )
 
     try:
-        if photo_id:
-            await bot.send_photo(chat_id=candidate.tg_id, photo=photo_id)
-    except asyncio.CancelledError:  # pragma: no cover - cooperates with shutdown
-        raise
-    except Exception as exc:  # noqa: BLE001 - attachments are optional, continue with text
-        logger.warning(
-            "DRIP photo send failed | user=%s | stage=%s | error=%s",
-            candidate.tg_id,
-            stage,
-            exc,
+        await bot.send_message(
+            chat_id=candidate.tg_id,
+            text=content.text,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
         )
-
-    try:
-        if video_id:
-            await bot.send_video(chat_id=candidate.tg_id, video=video_id)
-    except asyncio.CancelledError:  # pragma: no cover - cooperates with shutdown
+    except asyncio.CancelledError:  # pragma: no cover
         raise
-    except Exception as exc:  # noqa: BLE001 - attachments are optional, continue with text
-        logger.warning(
-            "DRIP video send failed | user=%s | stage=%s | error=%s",
-            candidate.tg_id,
-            stage,
-            exc,
-        )
-
-    try:
-        await bot.send_message(chat_id=candidate.tg_id, text=text, parse_mode="HTML")
-    except asyncio.CancelledError:  # pragma: no cover - cooperates with shutdown
-        raise
-    except Exception as exc:  # noqa: BLE001 - log failure and retry later
+    except Exception as exc:  # noqa: BLE001
         logger.warning(
             "DRIP send failed | user=%s | stage=%s | label=%s | error=%s",
             candidate.tg_id,
@@ -214,9 +240,9 @@ async def _send_stage(bot: Bot, candidate: DripCandidate, stage: int) -> tuple[b
             _STAGE_LABELS.get(stage, stage),
             exc,
         )
-        return False, key, str(exc)
+        return False, content.base_key + ".text", str(exc)
 
-    return True, key, None
+    return True, content.base_key + ".text", None
 
 
 def _log_verdict(candidate: DripCandidate, message: str) -> None:
@@ -242,7 +268,7 @@ async def _process_candidate(bot: Bot, candidate: DripCandidate) -> None:
     current_stage = max(0, int(candidate.drip_stage or 0))
     next_stage = _next_stage(current_stage)
     if next_stage is None:
-        _log_verdict(candidate, "done (already stage=3)")
+        _log_verdict(candidate, "done (already stage=1)")
         return
 
     reference, source = _resolve_activity(candidate)
@@ -282,7 +308,12 @@ async def _process_candidate(bot: Bot, candidate: DripCandidate) -> None:
         )
         return
 
-    sent, text_key, error = await _send_stage(bot, candidate, next_stage)
+    content = _choose_stage_content(next_stage, status)
+    if not content:
+        _log_verdict(candidate, f"skip (template-not-found) stage={next_stage} status={status}")
+        return
+
+    sent, text_key, error = await _send_stage(bot, candidate, next_stage, content)
     if not sent:
         details = error or "unknown-error"
         _log_verdict(candidate, f"send fail (stage {next_stage}): {details}")
@@ -360,14 +391,12 @@ class DripFollowupService:
     @classmethod
     def start(cls, bot: Bot) -> None:
         logger.info(
-            "DRIP worker bootstrap | enabled=%s | pid=%s | already_running=%s | interval_sec=%s | thresholds_min=(24h=%s, 48h=%s, 72h=%s)",
+            "DRIP worker bootstrap | enabled=%s | pid=%s | already_running=%s | interval_sec=%s | thresholds_min=(stage1=%s)",
             ENABLE_DRIP_FOLLOWUPS,
             os.getpid(),
             cls.is_running(),
             DRIP_CHECK_INTERVAL_SEC,
-            DRIP_24H_MIN,
-            DRIP_48H_MIN,
-            DRIP_72H_MIN,
+            DRIP_STAGE_1_MIN,
         )
 
         if not ENABLE_DRIP_FOLLOWUPS:
