@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 _missing_hot_lead_column_logged = False
 
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def now_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 async def upsert_user(
@@ -31,7 +31,7 @@ async def upsert_user(
     username: str | None,
     first_name: str | None,
 ) -> None:
-    now = utcnow()
+    ts = now_str()
     stmt = (
         insert(User)
         .values(
@@ -39,19 +39,19 @@ async def upsert_user(
             username=username,
             first_name=first_name,
             funnel_status="new",
-            last_activity_at=now,
+            last_activity_at=ts,
             drip_stage=0,
-            created_at=now,
-            updated_at=now,
+            created_at=ts,
+            updated_at=ts,
+            calculated_at=None,
         )
         .on_conflict_do_update(
             index_elements=[User.tg_id],
             set_={
                 "username": username,
                 "first_name": first_name,
-                "last_activity_at": now,
-                "updated_at": now,
-                "drip_stage": 0,
+                "last_activity_at": ts,
+                "updated_at": ts,
             },
         )
     )

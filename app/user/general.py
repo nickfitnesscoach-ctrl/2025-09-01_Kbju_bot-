@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.enums import ChatType
 from aiogram.types import CallbackQuery, Message, URLInputFile
+from sqlalchemy import select
+
+from app.database.models import User, async_session
 
 from app.calculator import get_activity_description
-from app.database.requests import get_user, set_user
+from app.database.requests import get_user, upsert_user
 from app.keyboards import main_menu, profile_keyboard
 from app.texts import get_media_id, get_text
 from utils.notifications import notify_lead_card
 
-from .shared import error_handler, rate_limit, safe_db_operation, sanitize_text, track_user_activity
+from .shared import error_handler, rate_limit, safe_db, safe_db_operation, sanitize_text, track_user_activity
 
 logger = logging.getLogger(__name__)
 
@@ -81,19 +85,38 @@ async def cmd_start(message: Message) -> None:
     username = sanitize_text(message.from_user.username or "", 50)
     first_name = sanitize_text(message.from_user.first_name or get_text("fallbacks.default_first_name"), 50)
 
-    lead_payload = await safe_db_operation(
-        set_user,
-        tg_id=message.from_user.id,
-        username=username,
-        first_name=first_name,
-    )
-    if lead_payload is False:
-        await message.answer(get_text("errors.temp_error"), parse_mode="HTML")
-        return
+    new_lead_payload: dict[str, Any] | None = None
+    async with async_session() as session:
+        existing_user_id = await session.scalar(
+            select(User.id).where(User.tg_id == message.from_user.id)
+        )
+        is_new_user = existing_user_id is None
 
-    if isinstance(lead_payload, dict):
         try:
-            await notify_lead_card(lead_payload, title=get_text("admin.leads.new_title"))
+            await safe_db(
+                upsert_user,
+                session,
+                tg_id=message.from_user.id,
+                username=username or None,
+                first_name=first_name or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - мягкий ответ только на неожиданные исключения
+            logger.exception("Failed to upsert user %s: %s", message.from_user.id, exc)
+            await message.answer(get_text("errors.temp_error"), parse_mode="HTML")
+            return
+
+        if is_new_user:
+            new_lead_payload = {
+                "tg_id": message.from_user.id,
+                "username": username,
+                "first_name": first_name,
+                "goal": None,
+                "calories": None,
+            }
+
+    if new_lead_payload is not None:
+        try:
+            await notify_lead_card(new_lead_payload, title=get_text("admin.leads.new_title"))
         except Exception as exc:  # noqa: BLE001 - уведомление не должно ломать сценарий
             logger.exception(
                 "Failed to send activation notification for user %s: %s",

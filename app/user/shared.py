@@ -20,7 +20,8 @@ from app.constants import (
     USER_REQUESTS_LIMIT,
     USER_REQUESTS_WINDOW,
 )
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.requests import update_last_activity
 from app.texts import get_text
 
@@ -91,6 +92,46 @@ async def safe_db_operation(operation: Callable[..., Awaitable[Any]], *args: Any
     if last_error is not None:
         logger.debug("safe_db_operation returning False due to error: %s", last_error)
     return False
+
+
+async def safe_db(operation: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any) -> Any:
+    """Run a DB coroutine and retry once on integrity/operational errors."""
+
+    name = getattr(operation, "__name__", str(operation))
+    session = _extract_session(args, kwargs)
+
+    try:
+        return await operation(*args, **kwargs)
+    except (IntegrityError, OperationalError) as exc:
+        logger.warning("Transient DB error in %s: %s. Retrying once.", name, exc)
+        if session is not None:
+            try:
+                await session.rollback()
+            except Exception as rollback_exc:  # noqa: BLE001 - log and retry anyway
+                logger.warning("Rollback before retry failed in %s: %s", name, rollback_exc)
+
+        await asyncio.sleep(0.3)
+
+        try:
+            return await operation(*args, **kwargs)
+        except Exception as retry_exc:  # noqa: BLE001 - propagate for caller to handle
+            logger.exception("DB error in %s after retry: %s", name, retry_exc)
+            if session is not None:
+                try:
+                    await session.rollback()
+                except Exception as rollback_exc:  # noqa: BLE001 - nothing else to do
+                    logger.warning("Rollback after failure failed in %s: %s", name, rollback_exc)
+            raise
+
+
+def _extract_session(args: tuple[Any, ...], kwargs: dict[str, Any]) -> AsyncSession | None:
+    for value in args:
+        if isinstance(value, AsyncSession):
+            return value
+    for value in kwargs.values():
+        if isinstance(value, AsyncSession):
+            return value
+    return None
 
 
 def rate_limit(handler: AsyncHandler) -> AsyncHandler:
