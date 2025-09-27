@@ -25,6 +25,10 @@ VALIDATION_LIMITS = {
 # Безопасность
 MAX_TEXT_LENGTH = 100
 DB_OPERATION_TIMEOUT = 10.0  # seconds
+# Количество повторов при временных ошибках БД (например, database is locked)
+DB_OPERATION_RETRIES = 3
+# Базовая пауза между повторами (будет увеличиваться линейно)
+DB_OPERATION_RETRY_DELAY = 0.5  # seconds
 
 # Статусы воронки лидов
 FUNNEL_STATUSES = {
