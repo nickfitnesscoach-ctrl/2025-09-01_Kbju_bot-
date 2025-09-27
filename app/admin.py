@@ -4,17 +4,18 @@ from __future__ import annotations
 import logging
 from typing import Optional, List
 
-from aiogram import Router, F
+from aiogram import F, Router
+from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
 from aiogram.filters import Command, Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
-    Message,
     CallbackQuery,
+    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ForceReply,
+    Message,
 )
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
 
 from app.database.requests import get_hot_leads
 from app.contact_requests import contact_request_registry
@@ -47,7 +48,7 @@ def _is_authorized_admin(message: Message) -> bool:
     if not message.from_user or message.from_user.id != ADMIN_CHAT_ID:
         return False
 
-    if message.chat.type != "private" or message.chat.id != ADMIN_CHAT_ID:
+    if message.chat.type != ChatType.PRIVATE or message.chat.id != ADMIN_CHAT_ID:
         return False
 
     return True
@@ -248,14 +249,14 @@ async def _show_lead_card(
 # ----------------------------
 # Handlers
 # ----------------------------
-@admin.message(Admin(), Command("admin"), F.chat.type == "private")
+@admin.message(Admin(), Command("admin"), F.chat.type == ChatType.PRIVATE)
 async def admin_home(message: Message) -> None:
     """Приветственная надпись админ-панели."""
     logger.debug("/admin entered by %s", message.from_user.id if message.from_user else "unknown")
     await message.answer(_admin_menu_text(), parse_mode="HTML")
 
 
-@admin.message(Admin(), Command("leads"), F.chat.type == "private")
+@admin.message(Admin(), Command("leads"), F.chat.type == ChatType.PRIVATE)
 async def admin_leads(message: Message, state: FSMContext) -> None:
     """Показать лиды (сразу открываем 1-ю карточку)."""
     leads = await get_hot_leads()

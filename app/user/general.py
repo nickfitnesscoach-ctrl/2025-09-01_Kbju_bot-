@@ -7,6 +7,7 @@ import logging
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
+from aiogram.enums import ChatType
 from aiogram.types import CallbackQuery, Message, URLInputFile
 
 from app.calculator import get_activity_description
@@ -21,9 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 def register(router: Router) -> None:
-    router.message.register(cmd_start, CommandStart(), F.chat.type == "private")
-    router.message.register(cmd_ping, Command("ping"), F.chat.type == "private")
-    router.message.register(cmd_contact_author, Command("contact_author"), F.chat.type == "private")
+    router.message.register(cmd_start, CommandStart(), F.chat.type == ChatType.PRIVATE)
+    router.message.register(cmd_ping, Command("ping"), F.chat.type == ChatType.PRIVATE)
+    router.message.register(
+        cmd_contact_author,
+        Command("contact_author"),
+        F.chat.type == ChatType.PRIVATE,
+    )
     router.callback_query.register(show_main_menu, F.data == "main_menu")
     router.callback_query.register(show_profile, F.data == "profile")
 

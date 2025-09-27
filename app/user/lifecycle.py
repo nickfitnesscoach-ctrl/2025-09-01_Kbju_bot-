@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from aiogram import F, Router
-from aiogram.enums import ChatMemberStatus
+from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.types import ChatMemberUpdated
 
 from app.database.requests import delete_user_by_tg_id, get_user
@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 def register(router: Router) -> None:
-    router.my_chat_member.register(handle_private_chat_member_update, F.chat.type == "private")
+    router.my_chat_member.register(
+        handle_private_chat_member_update,
+        F.chat.type == ChatType.PRIVATE,
+    )
 
 
 async def handle_private_chat_member_update(event: ChatMemberUpdated) -> None:
