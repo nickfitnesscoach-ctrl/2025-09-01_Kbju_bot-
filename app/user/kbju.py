@@ -16,7 +16,6 @@ from app.calculator import KBJUCalculator, get_activity_description, get_goal_de
 from app.constants import (
     DEFAULT_CALCULATED_TIMER_DELAY,
     FUNNEL_STATUSES,
-    PRIORITY_SCORES,
     VALIDATION_LIMITS,
 )
 from app.database.requests import get_user, update_user_data, update_user_status
@@ -118,7 +117,6 @@ async def calculate_and_save_kbju(
         **kbju,
         funnel_status=FUNNEL_STATUSES["calculated"],
         calculated_at=datetime.utcnow(),
-        priority_score=PRIORITY_SCORES["new"],
     )
 
     return kbju
@@ -142,8 +140,6 @@ def _user_to_dict(user: Any) -> dict[str, Any]:
         "fats": int(user.fats or 0),
         "carbs": int(user.carbs or 0),
         "funnel_status": user.funnel_status or "",
-        "priority": user.priority or "",
-        "priority_score": user.priority_score or 0,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "updated_at": user.updated_at.isoformat() if user.updated_at else None,
         "calculated_at": user.calculated_at.isoformat() if user.calculated_at else None,
@@ -459,14 +455,13 @@ async def _register_consultation_request(user_id: int) -> None:
     updated_user = await update_user_status(
         tg_id=user_id,
         status=FUNNEL_STATUSES["hotlead_consultation"],
-        priority_score=PRIORITY_SCORES["consultation_request"],
     )
 
     user_record = updated_user or await get_user(user_id) or user_before
 
     if user_record and not already_hot_lead:
         try:
-            await WebhookService.send_hot_lead(_user_to_dict(user_record), "consultation_request")
+            await WebhookService.send_hot_lead(_user_to_dict(user_record))
         except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "Failed to send hot lead webhook for user %s: %s",

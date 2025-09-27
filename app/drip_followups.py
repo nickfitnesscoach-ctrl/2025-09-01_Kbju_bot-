@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 from collections.abc import Iterable, Sequence
@@ -17,12 +18,25 @@ from app.database.models import User, async_session
 from app.database.requests import update_drip_stage
 from app.texts import get_button_text, get_media_id, get_optional_text, get_text
 from app.utils import CAPTION_LIMIT, strip_html
-from config import DRIP_CHECK_INTERVAL_SEC, DRIP_STAGE_1_MIN, ENABLE_DRIP_FOLLOWUPS
+from config import (
+    CHANNEL_URL,
+    DRIP_CHECK_INTERVAL_SEC,
+    DRIP_STAGE_1_MIN,
+    DRIP_STAGE_2_MIN,
+    DRIP_STAGE_3_MIN,
+    DRIP_STAGE_4_MIN,
+    ENABLE_DRIP_FOLLOWUPS,
+)
 
 logger = logging.getLogger(__name__)
 
-_STAGE_LABELS = {1: "1h"}
-_STAGE_THRESHOLDS = {1: DRIP_STAGE_1_MIN}
+_STAGE_LABELS = {1: "1h", 2: "24h", 3: "48h", 4: "72h"}
+_STAGE_THRESHOLDS = {
+    1: DRIP_STAGE_1_MIN,
+    2: DRIP_STAGE_2_MIN,
+    3: DRIP_STAGE_3_MIN,
+    4: DRIP_STAGE_4_MIN,
+}
 
 
 @dataclass(slots=True)
@@ -41,6 +55,7 @@ class StageContent:
 class DripCandidate:
     tg_id: int
     funnel_status: str | None
+    first_name: str | None
     gender: str | None
     drip_stage: int
     last_activity_at: datetime | None
@@ -50,6 +65,49 @@ class DripCandidate:
 
 def _normalize_status(status: str | None) -> str:
     return (status or "").strip().lower()
+
+
+def _normalize_channel_url(raw: str) -> str:
+    if not raw:
+        return ""
+    candidate = raw.strip()
+    if not candidate:
+        return ""
+    if candidate.startswith("http://") or candidate.startswith("https://"):
+        return candidate
+    if candidate.startswith("@"):
+        candidate = candidate[1:]
+    return f"https://t.me/{candidate}"
+
+
+def _resolve_channel_url() -> str:
+    configured = _normalize_channel_url(CHANNEL_URL)
+    if configured:
+        return configured
+    fallback_username = get_text("defaults.channel_username")
+    return _normalize_channel_url(fallback_username)
+
+
+def _build_format_kwargs(candidate: DripCandidate) -> dict[str, str]:
+    fallback_name = get_text("fallbacks.default_first_name")
+    name = (candidate.first_name or "").strip() or fallback_name
+    safe_name = html.escape(name)
+    channel_url = _resolve_channel_url()
+    return {
+        "first_name": safe_name,
+        "channel_url": channel_url,
+    }
+
+
+def _format_optional(value: str | None, *, format_kwargs: dict[str, str]) -> str | None:
+    if not value:
+        return None
+    try:
+        formatted = value.format(**format_kwargs)
+    except KeyError:
+        formatted = value
+    stripped = formatted.strip()
+    return stripped or None
 
 
 def _to_utc_naive(value: datetime | None) -> datetime | None:
@@ -113,9 +171,14 @@ def _stage_base_keys(stage: int, status: str | None) -> Iterable[str]:
     return base_keys
 
 
-def _choose_stage_content(stage: int, status: str | None) -> StageContent | None:
+def _choose_stage_content(
+    stage: int,
+    status: str | None,
+    candidate: DripCandidate,
+) -> StageContent | None:
+    format_kwargs = _build_format_kwargs(candidate)
     for base_key in _stage_base_keys(stage, status):
-        text = get_text(f"{base_key}.text")
+        text = get_text(f"{base_key}.text", **format_kwargs)
         if text.startswith("[Текст не найден"):
             continue
 
@@ -124,11 +187,13 @@ def _choose_stage_content(stage: int, status: str | None) -> StageContent | None
         image_url = get_media_id(f"{base_key}.image_url")
 
         button_text = get_optional_text(f"{base_key}.button_text")
+        button_text = _format_optional(button_text, format_kwargs=format_kwargs)
         button_text_key = get_optional_text(f"{base_key}.button_text_key")
         if not button_text and button_text_key:
             button_text = get_button_text(button_text_key)
         button_callback = get_optional_text(f"{base_key}.button_callback")
         button_url = get_optional_text(f"{base_key}.button_url")
+        button_url = _format_optional(button_url, format_kwargs=format_kwargs)
 
         return StageContent(
             base_key=base_key,
@@ -268,7 +333,7 @@ async def _process_candidate(bot: Bot, candidate: DripCandidate) -> None:
     current_stage = max(0, int(candidate.drip_stage or 0))
     next_stage = _next_stage(current_stage)
     if next_stage is None:
-        _log_verdict(candidate, "done (already stage=1)")
+        _log_verdict(candidate, f"done (already stage={current_stage})")
         return
 
     reference, source = _resolve_activity(candidate)
@@ -308,7 +373,7 @@ async def _process_candidate(bot: Bot, candidate: DripCandidate) -> None:
         )
         return
 
-    content = _choose_stage_content(next_stage, status)
+    content = _choose_stage_content(next_stage, status, candidate)
     if not content:
         _log_verdict(candidate, f"skip (template-not-found) stage={next_stage} status={status}")
         return
@@ -370,6 +435,7 @@ async def _load_candidates() -> tuple[Sequence[DripCandidate], str]:
             DripCandidate(
                 tg_id=user.tg_id,
                 funnel_status=user.funnel_status,
+                first_name=getattr(user, "first_name", None),
                 gender=getattr(user, "gender", None),
                 drip_stage=max(0, int(getattr(user, "drip_stage", 0) or 0)),
                 last_activity_at=getattr(user, "last_activity_at", None),

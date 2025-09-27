@@ -15,13 +15,6 @@ DELAYED_OFFER_DELAY = 3  # seconds
 LEADS_PAGE_SIZE = 10
 LEADS_DEFAULT_WINDOW = "all"
 
-# Приоритеты лидов
-PRIORITY_SCORES = {
-    'consultation_request': 100,  # Максимальный приоритет для заявок на консультацию
-    'hotlead_delayed': 80,        # Высокий приоритет для отложенных горячих лидов
-    'new': 0                      # Базовый приоритет для новых пользователей
-}
-
 # Валидация пользовательских данных
 VALIDATION_LIMITS = {
     'age': {'min': 15, 'max': 80},
@@ -32,18 +25,20 @@ VALIDATION_LIMITS = {
 # Безопасность
 MAX_TEXT_LENGTH = 100
 DB_OPERATION_TIMEOUT = 10.0  # seconds
+# Количество повторов при временных ошибках БД (например, database is locked)
+DB_OPERATION_RETRIES = 3
+# Базовая пауза между повторами (будет увеличиваться линейно)
+DB_OPERATION_RETRY_DELAY = 0.5  # seconds
 
 # Статусы воронки лидов
 FUNNEL_STATUSES = {
     'new': 'new',
     'calculated': 'calculated',
     'hotlead_consultation': 'hotlead_consultation',
-    'hotlead_delayed': 'hotlead_delayed'
 }
 
-# Приоритеты пользователей
-USER_PRIORITIES = {
-    'nutrition': 'nutrition',
-    'training': 'training', 
-    'schedule': 'schedule'
+FUNNEL_STATUS_LABELS = {
+    FUNNEL_STATUSES['new']: 'Новый лид',
+    FUNNEL_STATUSES['calculated']: 'Получил расчёт',
+    FUNNEL_STATUSES['hotlead_consultation']: 'Записан на диагностику',
 }

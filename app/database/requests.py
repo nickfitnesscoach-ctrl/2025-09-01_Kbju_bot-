@@ -29,42 +29,84 @@ async def set_user(
     new_lead_payload: dict[str, Any] | None = None
 
     async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        try:
+            user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
-        if not user:
-            user = User(
-                tg_id=tg_id,
-                username=username,
-                first_name=first_name,
-                funnel_status="new",
-                priority_score=0,
-                last_activity_at=datetime.utcnow(),
+            if not user:
+                user = User(
+                    tg_id=tg_id,
+                    username=username,
+                    first_name=first_name,
+                    funnel_status="new",
+                    last_activity_at=datetime.utcnow(),
+                )
+                session.add(user)
+                new_lead_payload = {
+                    "tg_id": tg_id,
+                    "username": username,
+                    "first_name": first_name,
+                    "goal": None,
+                    "calories": None,
+                }
+            else:
+                _refresh_existing_user(user, username=username, first_name=first_name)
+
+            await session.commit()
+
+        except IntegrityError as exc:
+            await session.rollback()
+            logger.warning(
+                "Integrity error while saving user %s; attempting recovery: %s",
+                tg_id,
+                exc,
             )
-            session.add(user)
-            new_lead_payload = {
-                "tg_id": tg_id,
-                "username": username,
-                "first_name": first_name,
-                "goal": None,
-                "calories": None,
-            }
-        else:
-            if username and user.username != username:
-                user.username = username
-            if first_name and user.first_name != first_name:
-                user.first_name = first_name
-            user.last_activity_at = datetime.utcnow()
-            user.updated_at = datetime.utcnow()
-            if getattr(user, "drip_stage", None) not in (None, 0):
-                user.drip_stage = 0
 
-        await session.commit()
+            user = await session.scalar(select(User).where(User.tg_id == tg_id))
+
+            if not user:
+                logger.error(
+                    "Recovery failed after integrity error: user %s not found", tg_id
+                )
+                raise
+
+            _refresh_existing_user(user, username=username, first_name=first_name)
+
+            try:
+                await session.commit()
+            except IntegrityError as second_exc:
+                await session.rollback()
+                logger.exception(
+                    "Failed to recover from integrity error for user %s: %s",
+                    tg_id,
+                    second_exc,
+                )
+                raise
+            else:
+                new_lead_payload = None
 
         if new_lead_payload is not None:
             new_lead_payload["goal"] = getattr(user, "goal", None)
             new_lead_payload["calories"] = getattr(user, "calories", None)
 
     return new_lead_payload
+
+
+def _refresh_existing_user(
+    user: User,
+    *,
+    username: str | None = None,
+    first_name: str | None = None,
+) -> None:
+    """Обновить поля существующего пользователя и сбросить стадию дрипа."""
+
+    if username and user.username != username:
+        user.username = username
+    if first_name and user.first_name != first_name:
+        user.first_name = first_name
+    user.last_activity_at = datetime.utcnow()
+    user.updated_at = datetime.utcnow()
+    if getattr(user, "drip_stage", None) not in (None, 0):
+        user.drip_stage = 0
 
 async def get_user(tg_id: int) -> User | None:
     """Получить пользователя по Telegram ID."""
@@ -154,9 +196,7 @@ async def update_user_data(tg_id: int, **kwargs: Any) -> User | None:
 async def update_user_status(
     tg_id: int,
     status: str,
-    priority: str | None = None,
     first_name: str | None = None,
-    priority_score: int | None = None,
 ) -> User | None:
     """Обновить статус воронки лидов и дополнительные данные."""
 
@@ -169,12 +209,8 @@ async def update_user_status(
 
         if user:
             user.funnel_status = status
-            if priority:
-                user.priority = priority
             if first_name:
                 user.first_name = first_name
-            if priority_score is not None:
-                user.priority_score = priority_score
             user.last_activity_at = datetime.utcnow()
             user.updated_at = datetime.utcnow()
 
@@ -184,8 +220,6 @@ async def update_user_status(
                 "first_name": user.first_name,
                 "goal": user.goal,
                 "calories": user.calories,
-                "priority": user.priority,
-                "priority_score": user.priority_score,
                 "funnel_status": user.funnel_status,
             }
 
@@ -304,10 +338,7 @@ async def get_hot_leads() -> list[User]:
         users = await session.scalars(
             select(User)
             .where(User.funnel_status.like("%hotlead%"))
-            .order_by(
-                desc(User.priority_score),
-                desc(User.updated_at),
-            )
+            .order_by(desc(User.updated_at))
         )
         return users.all()
 

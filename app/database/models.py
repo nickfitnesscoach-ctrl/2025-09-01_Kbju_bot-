@@ -81,8 +81,6 @@ class User(Base):
     
     # Статусы воронки лидов
     funnel_status: Mapped[str] = mapped_column(String(20), default='new')  # new/calculated/hotlead
-    priority: Mapped[str] = mapped_column(String(20), nullable=True)  # nutrition/training/schedule
-    priority_score: Mapped[int] = mapped_column(Integer, default=0)  # Числовой приоритет для сортировки
     hot_lead_notified_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
     # Признаки активности и прогресса drip-воронки
