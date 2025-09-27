@@ -58,7 +58,8 @@ BOT_TOKEN = TELEGRAM_BOT_TOKEN
 ADMIN_CHAT_ID = _int(os.getenv("ADMIN_CHAT_ID"), field_name="ADMIN_CHAT_ID")
 
 # База данных
-DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///data/db.sqlite3")
+# Храним SQLite-базу в каталоге проекта, чтобы избежать прав на /data
+DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///./data/db.sqlite3")
 
 # Webhook для интеграции с n8n
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
