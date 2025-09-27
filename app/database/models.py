@@ -104,8 +104,6 @@ async def async_main():
 def _ensure_additional_user_columns(sync_conn) -> None:
     """Гарантировать наличие дополнительных колонок в таблице users."""
 
-    _drop_legacy_priority_columns(sync_conn)
-
     inspector = inspect(sync_conn)
     existing = {column["name"] for column in inspector.get_columns(User.__tablename__)}
 
@@ -158,87 +156,3 @@ def _ensure_additional_user_columns(sync_conn) -> None:
         "ALTER TABLE users ADD COLUMN drip_stage INTEGER NOT NULL DEFAULT 0",
         "Adding users.drip_stage column for drip follow-ups",
     )
-
-
-def _drop_legacy_priority_columns(sync_conn) -> None:
-    """Удалить устаревшие колонки priority и priority_score из таблицы users."""
-
-    inspector = inspect(sync_conn)
-    columns = [column["name"] for column in inspector.get_columns(User.__tablename__)]
-    legacy_columns = [column for column in ("priority", "priority_score") if column in columns]
-
-    if not legacy_columns:
-        logger.debug("No legacy priority columns present in users table")
-        return
-
-    if sync_conn.dialect.name != "sqlite":
-        for column in legacy_columns:
-            logger.info("Dropping legacy users.%s column", column)
-            try:
-                sync_conn.execute(text(f"ALTER TABLE {User.__tablename__} DROP COLUMN {column}"))
-            except SQLAlchemyError as exc:  # pragma: no cover - defensive logging
-                logger.exception("Failed to drop users.%s column: %s", column, exc)
-                raise
-        return
-
-    logger.info("Recreating users table without legacy priority columns")
-
-    sync_conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
-    success = False
-
-    try:
-        sync_conn.exec_driver_sql("BEGIN")
-        sync_conn.exec_driver_sql(
-            """
-            CREATE TABLE users_new (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              tg_id INTEGER NOT NULL UNIQUE,
-              username TEXT,
-              first_name TEXT,
-              gender TEXT,
-              age INTEGER,
-              weight REAL,
-              height INTEGER,
-              activity TEXT,
-              goal TEXT,
-              calories INTEGER,
-              proteins INTEGER,
-              fats INTEGER,
-              carbs INTEGER,
-              funnel_status TEXT,
-              hot_lead_notified_at TEXT,
-              last_activity_at TEXT,
-              drip_stage INTEGER DEFAULT 0,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL,
-              calculated_at TEXT
-            )
-            """
-        )
-        sync_conn.exec_driver_sql(
-            """
-            INSERT INTO users_new
-              (id,tg_id,username,first_name,gender,age,weight,height,activity,goal,calories,proteins,fats,carbs,
-               funnel_status,hot_lead_notified_at,last_activity_at,drip_stage,created_at,updated_at,calculated_at)
-            SELECT
-              id,tg_id,username,first_name,gender,age,weight,height,activity,goal,calories,proteins,fats,carbs,
-              funnel_status,hot_lead_notified_at,last_activity_at,drip_stage,created_at,updated_at,calculated_at
-            FROM users
-            """
-        )
-        sync_conn.exec_driver_sql("DROP TABLE users")
-        sync_conn.exec_driver_sql("ALTER TABLE users_new RENAME TO users")
-        sync_conn.exec_driver_sql("COMMIT")
-        success = True
-    except SQLAlchemyError as exc:  # pragma: no cover - defensive logging
-        logger.exception("Failed to recreate users table without legacy columns: %s", exc)
-        try:
-            sync_conn.exec_driver_sql("ROLLBACK")
-        except SQLAlchemyError:
-            logger.exception("Failed to rollback users table recreation")
-        raise
-    finally:
-        sync_conn.exec_driver_sql("PRAGMA foreign_keys=ON")
-
-    if success:
-        sync_conn.exec_driver_sql("VACUUM")
