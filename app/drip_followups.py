@@ -17,12 +17,17 @@ from app.database.models import User, async_session
 from app.database.requests import update_drip_stage
 from app.texts import get_button_text, get_media_id, get_optional_text, get_text
 from app.utils import CAPTION_LIMIT, strip_html
-from config import DRIP_CHECK_INTERVAL_SEC, DRIP_STAGE_1_MIN, ENABLE_DRIP_FOLLOWUPS
+from config import (
+    DRIP_CHECK_INTERVAL_SEC,
+    DRIP_STAGE_1_MIN,
+    DRIP_STAGE_2_MIN,
+    ENABLE_DRIP_FOLLOWUPS,
+)
 
 logger = logging.getLogger(__name__)
 
-_STAGE_LABELS = {1: "1h"}
-_STAGE_THRESHOLDS = {1: DRIP_STAGE_1_MIN}
+_STAGE_LABELS = {1: "1h", 2: "24h"}
+_STAGE_THRESHOLDS = {1: DRIP_STAGE_1_MIN, 2: DRIP_STAGE_2_MIN}
 
 
 @dataclass(slots=True)
