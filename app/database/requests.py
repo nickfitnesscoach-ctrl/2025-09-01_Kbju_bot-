@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 _missing_hot_lead_column_logged = False
 
 
-def now_str() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+def now_dt() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def upsert_user(
@@ -31,7 +31,7 @@ async def upsert_user(
     username: str | None,
     first_name: str | None,
 ) -> None:
-    ts = now_str()
+    ts = now_dt()
     insert_stmt = (
         insert(User)
         .values(
