@@ -10,7 +10,7 @@ from typing import Any
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, Message
 
 from app.calculator import KBJUCalculator, get_activity_description, get_goal_description
 from app.constants import (
@@ -29,8 +29,7 @@ from app.keyboards import (
     goal_keyboard,
 )
 from app.states import KBJUStates
-from app.texts import get_button_text, get_media_id, get_optional_text, get_text
-from app.utils import CAPTION_LIMIT, split_html_by_len, strip_html
+from app.texts import get_button_text, get_text
 from app.webhook import TimerService, WebhookService
 
 from .shared import error_handler, rate_limit, safe_db_operation, sanitize_text, track_user_activity
@@ -482,72 +481,6 @@ async def _handle_diagnostic_request(callback: CallbackQuery) -> None:
 
     await _register_consultation_request(callback.from_user.id)
 
-    await _send_consultation_offer(callback)
-
     confirmation_text = get_text("hot_lead_success")
     await callback.message.answer(confirmation_text, parse_mode="HTML")
 
-
-async def _send_consultation_offer(
-    callback: CallbackQuery,
-    reply_markup: InlineKeyboardMarkup | None = None,
-) -> None:
-    if not callback.message:
-        return
-
-    offer_text = get_text("consultation_offer")
-    photo_id = get_media_id("consultation_offer.photo_file_id")
-    image_url = get_optional_text("consultation_offer.image_url")
-    keyboard = reply_markup
-
-    try:
-        await callback.message.edit_reply_markup()
-    except TelegramBadRequest:
-        pass
-
-    caption_text = offer_text
-    tail_text = ""
-    if len(strip_html(offer_text)) > CAPTION_LIMIT:
-        caption_text, tail_text = split_html_by_len(offer_text)
-
-    async def _send_tail_if_needed() -> None:
-        if tail_text and strip_html(tail_text).strip():
-            await callback.message.answer(
-                tail_text,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-
-    async def _send_photo_offer(photo: str) -> bool:
-        try:
-            await callback.message.answer_photo(
-                photo=photo,
-                caption=caption_text,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-        except TelegramBadRequest as exc:
-            logger.warning(
-                "Failed to send consultation offer photo for user %s: %s",
-                callback.from_user.id,
-                exc,
-            )
-            return False
-
-        await _send_tail_if_needed()
-        return True
-
-    sent = False
-    if photo_id:
-        sent = await _send_photo_offer(photo_id)
-
-    if not sent and image_url:
-        sent = await _send_photo_offer(image_url)
-
-    if not sent:
-        await callback.message.answer(
-            offer_text,
-            reply_markup=keyboard,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
