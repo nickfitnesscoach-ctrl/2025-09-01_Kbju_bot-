@@ -5,17 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.calculator import KBJUCalculator, get_activity_description, get_goal_description
 from app.constants import (
     DEFAULT_CALCULATED_TIMER_DELAY,
-    DELAYED_OFFER_DELAY,
     FUNNEL_STATUSES,
     PRIORITY_SCORES,
     VALIDATION_LIMITS,
@@ -25,7 +24,6 @@ from app.features import CHECK_CALLBACK_DATA, ensure_subscription_and_continue
 from app.keyboards import (
     activity_keyboard,
     back_to_menu,
-    consultation_contact_keyboard,
     delayed_offer_keyboard,
     gender_keyboard,
     goal_keyboard,
@@ -46,9 +44,6 @@ ACTIVITY_INPUT_MAP: dict[str, str] = {
     "medium": "moderate",
     "high": "high",
 }
-
-
-_delayed_offer_tasks: dict[int, asyncio.Task] = {}
 
 
 def register(router: Router) -> None:
@@ -183,40 +178,12 @@ async def show_kbju_results(
     await callback.message.edit_text(result_text, parse_mode="HTML")
 
 
-async def send_delayed_offer(user_id: int, chat_id: int) -> None:
-    from aiogram import Bot
-    from config import TOKEN
-
-    bot: Bot | None = None
-    try:
-        await asyncio.sleep(DELAYED_OFFER_DELAY)
-        bot = Bot(token=TOKEN)
-        await bot.send_message(
-            chat_id=chat_id,
-            text=get_text("delayed_offer"),
-            reply_markup=delayed_offer_keyboard(),
-            parse_mode="HTML",
-        )
-    except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
-        raise
-    except Exception as exc:  # noqa: BLE001 - do not break the flow
-        logger.error("Error sending delayed offer to %s: %s", user_id, exc)
-    finally:
-        if bot:
-            await bot.session.close()
-        _delayed_offer_tasks.pop(user_id, None)
-
-
-def schedule_delayed_offer(user_id: int, chat_id: int) -> None:
-    cancel_delayed_offer(user_id)
-    task = asyncio.create_task(send_delayed_offer(user_id, chat_id))
-    _delayed_offer_tasks[user_id] = task
-
-
-def cancel_delayed_offer(user_id: int) -> None:
-    task = _delayed_offer_tasks.pop(user_id, None)
-    if task and not task.done():
-        task.cancel()
+async def send_diagnostics_offer_message(message: Message) -> None:
+    await message.answer(
+        get_text("delayed_offer"),
+        reply_markup=delayed_offer_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 @rate_limit
@@ -424,7 +391,7 @@ async def _process_goal_after_subscription(callback: CallbackQuery, state: FSMCo
             )
 
         if callback.message:
-            schedule_delayed_offer(callback.from_user.id, callback.message.chat.id)
+            await send_diagnostics_offer_message(callback.message)
 
         await state.clear()
     except Exception as exc:  # noqa: BLE001
@@ -453,7 +420,7 @@ async def process_delayed_yes(callback: CallbackQuery) -> None:
         pass
     await _cancel_stalled_reminder(callback.from_user.id)
 
-    await _send_consultation_offer(callback)
+    await _handle_diagnostic_request(callback)
     await callback.answer()
 
 
@@ -464,26 +431,39 @@ async def process_lead_request(callback: CallbackQuery) -> None:
     if not (callback.from_user and callback.message):
         return
 
-    user_before = await get_user(callback.from_user.id)
-    already_hot_lead = bool(
-        user_before and str(user_before.funnel_status or "").startswith("hotlead_")
-    )
-
     try:
         TimerService.cancel_timer(callback.from_user.id)
     except Exception:
         logger.debug("Failed to cancel timer for user %s", callback.from_user.id, exc_info=True)
     await _cancel_stalled_reminder(callback.from_user.id)
 
-    cancel_delayed_offer(callback.from_user.id)
+    success_text = get_text("hot_lead_success")
+
+    async def _send_success_message() -> None:
+        try:
+            await callback.message.edit_reply_markup()
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(success_text, parse_mode="HTML")
+
+    await _register_consultation_request(callback.from_user.id)
+    await _send_success_message()
+    await callback.answer()
+
+
+async def _register_consultation_request(user_id: int) -> None:
+    user_before = await get_user(user_id)
+    already_hot_lead = bool(
+        user_before and str(user_before.funnel_status or "").startswith("hotlead_")
+    )
 
     updated_user = await update_user_status(
-        tg_id=callback.from_user.id,
+        tg_id=user_id,
         status=FUNNEL_STATUSES["hotlead_consultation"],
         priority_score=PRIORITY_SCORES["consultation_request"],
     )
 
-    user_record = updated_user or await get_user(callback.from_user.id) or user_before
+    user_record = updated_user or await get_user(user_id) or user_before
 
     if user_record and not already_hot_lead:
         try:
@@ -491,40 +471,34 @@ async def process_lead_request(callback: CallbackQuery) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "Failed to send hot lead webhook for user %s: %s",
-                callback.from_user.id,
+                user_id,
                 exc,
             )
 
-    success_text = get_text(
-        "hot_lead_success",
-        user_id=callback.from_user.id,
-        username=callback.from_user.username or get_text("fallbacks.username_unknown"),
-    )
-    reply_markup = back_to_menu()
 
-    async def _send_success_message() -> None:
-        try:
-            await callback.message.edit_reply_markup()
-        except TelegramBadRequest:
-            pass
-        await callback.message.answer(
-            success_text,
-            reply_markup=reply_markup,
-            parse_mode="HTML",
-        )
+async def _handle_diagnostic_request(callback: CallbackQuery) -> None:
+    if not (callback.from_user and callback.message):
+        return
 
-    await _send_success_message()
-    await callback.answer()
+    await _register_consultation_request(callback.from_user.id)
+
+    await _send_consultation_offer(callback)
+
+    confirmation_text = get_text("hot_lead_success")
+    await callback.message.answer(confirmation_text, parse_mode="HTML")
 
 
-async def _send_consultation_offer(callback: CallbackQuery) -> None:
+async def _send_consultation_offer(
+    callback: CallbackQuery,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
     if not callback.message:
         return
 
     offer_text = get_text("consultation_offer")
     photo_id = get_media_id("consultation_offer.photo_file_id")
     image_url = get_optional_text("consultation_offer.image_url")
-    keyboard = consultation_contact_keyboard()
+    keyboard = reply_markup
 
     try:
         await callback.message.edit_reply_markup()

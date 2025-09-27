@@ -68,14 +68,6 @@ def delayed_offer_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-# Клавиатура для запроса консультации
-def consultation_contact_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_button_text("send_lead"),  callback_data="send_lead")],
-        [InlineKeyboardButton(text=get_button_text("main_menu"),   callback_data="main_menu")],
-    ])
-
-
 # Возврат к главному меню
 def back_to_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
