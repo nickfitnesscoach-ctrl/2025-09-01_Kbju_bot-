@@ -92,6 +92,15 @@ DRIP_STAGE_1_MIN = _DRIP_STAGE_1 if _DRIP_STAGE_1 is not None else 60
 _DRIP_STAGE_2 = _int(os.getenv("DRIP_STAGE_2_MIN"), field_name="DRIP_STAGE_2_MIN")
 DRIP_STAGE_2_MIN = _DRIP_STAGE_2 if _DRIP_STAGE_2 is not None else 1_440
 
+_DRIP_STAGE_3 = _int(os.getenv("DRIP_STAGE_3_MIN"), field_name="DRIP_STAGE_3_MIN")
+DRIP_STAGE_3_MIN = _DRIP_STAGE_3 if _DRIP_STAGE_3 is not None else 2_880
+
+_DRIP_STAGE_4 = _int(os.getenv("DRIP_STAGE_4_MIN"), field_name="DRIP_STAGE_4_MIN")
+if _DRIP_STAGE_4 is not None:
+    DRIP_STAGE_4_MIN = _DRIP_STAGE_4
+else:
+    DRIP_STAGE_4_MIN = DRIP_STAGE_3_MIN + 1_440
+
 _missing_required: list[str] = []
 if not TELEGRAM_BOT_TOKEN:
     _missing_required.append("TELEGRAM_BOT_TOKEN")
@@ -127,13 +136,15 @@ def log_drip_configuration(
 
     active_logger.info(
         "DRIP: enabled=%s | pid=%s | worker_state=%s | interval_sec=%s | "
-        "thresholds_min=(stage1=%s, stage2=%s)",
+        "thresholds_min=(stage1=%s, stage2=%s, stage3=%s, stage4=%s)",
         ENABLE_DRIP_FOLLOWUPS,
         os.getpid(),
         worker_state,
         DRIP_CHECK_INTERVAL_SEC,
         DRIP_STAGE_1_MIN,
         DRIP_STAGE_2_MIN,
+        DRIP_STAGE_3_MIN,
+        DRIP_STAGE_4_MIN,
     )
 
 
