@@ -77,14 +77,26 @@ async def _cancel_stalled_reminder(user_id: int) -> None:
         logger.exception("Failed to cancel stalled reminder for user %s: %s", user_id, exc)
 
 
+def _cancel_calculated_timer(user_id: int, *, context: str) -> None:
+    """Отменить таймер расчёта и вывести отладочную информацию."""
+
+    try:
+        TimerService.cancel_timer(user_id)
+    except Exception as exc:  # noqa: BLE001 - log only
+        logger.debug(
+            "Failed to cancel calculated timer for user %s in %s: %s",
+            user_id,
+            context,
+            exc,
+            exc_info=logger.isEnabledFor(logging.DEBUG),
+        )
+
+
 async def _start_kbju_flow_inner(callback: CallbackQuery) -> None:
     if not (callback.from_user and callback.message):
         return
 
-    try:
-        TimerService.cancel_timer(callback.from_user.id)
-    except Exception:
-        pass
+    _cancel_calculated_timer(callback.from_user.id, context="start_kbju_flow")
     await _cancel_stalled_reminder(callback.from_user.id)
 
     await callback.message.edit_text(
@@ -120,30 +132,6 @@ async def calculate_and_save_kbju(
     )
 
     return kbju
-
-
-def _user_to_dict(user: Any) -> dict[str, Any]:
-    if not user:
-        return {}
-    return {
-        "tg_id": user.tg_id or 0,
-        "username": user.username or "",
-        "first_name": user.first_name or "",
-        "gender": user.gender or "",
-        "age": user.age or 0,
-        "weight": float(user.weight or 0.0),
-        "height": int(user.height or 0),
-        "activity": user.activity or "",
-        "goal": user.goal or "",
-        "calories": int(user.calories or 0),
-        "proteins": int(user.proteins or 0),
-        "fats": int(user.fats or 0),
-        "carbs": int(user.carbs or 0),
-        "funnel_status": user.funnel_status or "",
-        "created_at": user.created_at.isoformat() if user.created_at else None,
-        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
-        "calculated_at": user.calculated_at.isoformat() if user.calculated_at else None,
-    }
 
 
 async def show_kbju_results(
@@ -379,7 +367,9 @@ async def _process_goal_after_subscription(callback: CallbackQuery, state: FSMCo
                 user_data.tg_id,
                 user_data.funnel_status,
             )
-            await WebhookService.send_calculated_lead(_user_to_dict(user_data))
+            await WebhookService.send_calculated_lead(
+                WebhookService.serialize_user(user_data)
+            )
         else:
             logger.warning(
                 "[Webhook] Failed to load user %s for calculated webhook", callback.from_user.id
@@ -409,10 +399,7 @@ async def process_delayed_yes(callback: CallbackQuery) -> None:
     if not (callback.from_user and callback.message):
         return
 
-    try:
-        TimerService.cancel_timer(callback.from_user.id)
-    except Exception:
-        pass
+    _cancel_calculated_timer(callback.from_user.id, context="process_delayed_yes")
     await _cancel_stalled_reminder(callback.from_user.id)
 
     await _handle_diagnostic_request(callback)
@@ -426,10 +413,7 @@ async def process_lead_request(callback: CallbackQuery) -> None:
     if not (callback.from_user and callback.message):
         return
 
-    try:
-        TimerService.cancel_timer(callback.from_user.id)
-    except Exception:
-        logger.debug("Failed to cancel timer for user %s", callback.from_user.id, exc_info=True)
+    _cancel_calculated_timer(callback.from_user.id, context="process_lead_request")
     await _cancel_stalled_reminder(callback.from_user.id)
 
     success_text = get_text("hot_lead_success")
@@ -461,7 +445,9 @@ async def _register_consultation_request(user_id: int) -> None:
 
     if user_record and not already_hot_lead:
         try:
-            await WebhookService.send_hot_lead(_user_to_dict(user_record))
+            await WebhookService.send_hot_lead(
+                WebhookService.serialize_user(user_record)
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "Failed to send hot lead webhook for user %s: %s",
