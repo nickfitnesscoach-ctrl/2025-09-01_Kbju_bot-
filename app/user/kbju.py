@@ -29,7 +29,6 @@ from app.keyboards import (
     delayed_offer_keyboard,
     gender_keyboard,
     goal_keyboard,
-    priority_keyboard,
 )
 from app.states import KBJUStates
 from app.texts import get_button_text, get_media_id, get_optional_text, get_text
@@ -64,7 +63,6 @@ def register(router: Router) -> None:
     router.callback_query.register(process_goal, F.data.startswith("goal_"))
     router.callback_query.register(process_delayed_yes, F.data == "delayed_yes")
     router.callback_query.register(process_lead_request, F.data == "send_lead")
-    router.callback_query.register(process_priority, F.data.startswith("priority_"))
 
 
 async def start_funnel_timer(user_id: int) -> None:
@@ -455,11 +453,7 @@ async def process_delayed_yes(callback: CallbackQuery) -> None:
         pass
     await _cancel_stalled_reminder(callback.from_user.id)
 
-    await callback.message.edit_text(
-        get_text("hot_lead_priorities"),
-        reply_markup=priority_keyboard(),
-        parse_mode="HTML",
-    )
+    await _send_consultation_offer(callback)
     await callback.answer()
 
 
@@ -523,19 +517,9 @@ async def process_lead_request(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@rate_limit
-@error_handler
-@track_user_activity("process_priority")
-async def process_priority(callback: CallbackQuery) -> None:
-    if not (callback.from_user and callback.message and callback.data):
+async def _send_consultation_offer(callback: CallbackQuery) -> None:
+    if not callback.message:
         return
-
-    priority = callback.data.split("_", 1)[1]
-
-    await update_user_data(
-        tg_id=callback.from_user.id,
-        priority=priority,
-    )
 
     offer_text = get_text("consultation_offer")
     photo_id = get_media_id("consultation_offer.photo_file_id")
@@ -593,5 +577,3 @@ async def process_priority(callback: CallbackQuery) -> None:
             parse_mode="HTML",
             disable_web_page_preview=True,
         )
-
-    await callback.answer()
