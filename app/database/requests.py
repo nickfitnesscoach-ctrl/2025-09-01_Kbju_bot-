@@ -32,7 +32,7 @@ async def upsert_user(
     first_name: str | None,
 ) -> None:
     ts = now_str()
-    stmt = (
+    insert_stmt = (
         insert(User)
         .values(
             tg_id=tg_id,
@@ -45,17 +45,21 @@ async def upsert_user(
             updated_at=ts,
             calculated_at=None,
         )
-        .on_conflict_do_update(
-            index_elements=[User.tg_id],
-            set_={
-                "username": username,
-                "first_name": first_name,
-                "last_activity_at": ts,
-                "updated_at": ts,
-            },
+        .prefix_with("OR IGNORE")
+    )
+    await session.execute(insert_stmt)
+
+    update_stmt = (
+        update(User)
+        .where(User.tg_id == tg_id)
+        .values(
+            username=username,
+            first_name=first_name,
+            last_activity_at=ts,
+            updated_at=ts,
         )
     )
-    await session.execute(stmt)
+    await session.execute(update_stmt)
     await session.commit()
 
 
