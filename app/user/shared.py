@@ -13,11 +13,14 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, Telegra
 from aiogram.types import CallbackQuery, Message
 
 from app.constants import (
+    DB_OPERATION_RETRIES,
+    DB_OPERATION_RETRY_DELAY,
     DB_OPERATION_TIMEOUT,
     MAX_TEXT_LENGTH,
     USER_REQUESTS_LIMIT,
     USER_REQUESTS_WINDOW,
 )
+from sqlalchemy.exc import OperationalError
 from app.database.requests import update_last_activity
 from app.texts import get_text
 
@@ -39,20 +42,55 @@ def sanitize_text(value: Any, max_length: int = MAX_TEXT_LENGTH) -> str:
 
 
 async def safe_db_operation(operation: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any) -> Any:
-    """Execute a DB coroutine with a timeout and unified logging."""
+    """Execute a DB coroutine with a timeout, retries and unified logging."""
 
-    try:
-        return await asyncio.wait_for(operation(*args, **kwargs), timeout=DB_OPERATION_TIMEOUT)
-    except asyncio.TimeoutError:
-        logger.error("DB timeout: %s", getattr(operation, "__name__", str(operation)))
-        return False
-    except Exception as exc:  # noqa: BLE001 - defensive logging
-        logger.exception(
-            "DB error in %s: %s",
-            getattr(operation, "__name__", str(operation)),
-            exc,
-        )
-        return False
+    attempt = 0
+    last_error: Exception | None = None
+
+    while attempt < DB_OPERATION_RETRIES:
+        try:
+            return await asyncio.wait_for(operation(*args, **kwargs), timeout=DB_OPERATION_TIMEOUT)
+        except asyncio.TimeoutError as exc:
+            logger.error("DB timeout: %s", getattr(operation, "__name__", str(operation)))
+            last_error = exc
+            break
+        except OperationalError as exc:
+            last_error = exc
+            attempt += 1
+            if attempt >= DB_OPERATION_RETRIES:
+                logger.exception(
+                    "DB operational error in %s after %s attempts: %s",
+                    getattr(operation, "__name__", str(operation)),
+                    attempt,
+                    exc,
+                )
+                break
+
+            delay = DB_OPERATION_RETRY_DELAY * attempt
+            logger.warning(
+                "DB operational error in %s (attempt %s/%s): %s | retrying in %.2fs",
+                getattr(operation, "__name__", str(operation)),
+                attempt,
+                DB_OPERATION_RETRIES,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            continue
+        except Exception as exc:  # noqa: BLE001 - defensive logging
+            logger.exception(
+                "DB error in %s: %s",
+                getattr(operation, "__name__", str(operation)),
+                exc,
+            )
+            last_error = exc
+            break
+        else:
+            break
+
+    if last_error is not None:
+        logger.debug("safe_db_operation returning False due to error: %s", last_error)
+    return False
 
 
 def rate_limit(handler: AsyncHandler) -> AsyncHandler:
