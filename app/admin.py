@@ -22,6 +22,7 @@ from app.contact_requests import contact_request_registry
 from app.states import AdminStates
 from app.texts import get_text, get_button_text, set_media_id
 from app.calculator import get_goal_description, get_activity_description
+from app.constants import FUNNEL_STATUS_LABELS
 from config import ADMIN_CHAT_ID
 from utils.notifications import CONTACT_REQUEST_MESSAGE
 
@@ -95,20 +96,25 @@ def _username_link(username: Optional[str]) -> str:
     return f'<a href="https://t.me/{username}">@{username}</a>'
 
 
-def _priority_label(code: Optional[str]) -> str:
-    """Подпись направления из JSON кнопок (priority_nutrition/training/schedule)."""
-    if not code:
-        return "не указано"
-    return get_button_text(f"priority_{code}")
+def _status_icon(status: Optional[str]) -> str:
+    """Пиктограмма статуса лида для карточки."""
+    if not status:
+        return "🟡"
 
-
-def _priority_icon(score: int) -> str:
-    """Визуальный индикатор приоритета."""
-    if score >= 100:
-        return "🎆"
-    if score >= 80:
+    normalized = status.lower()
+    if normalized.startswith("hotlead"):
         return "🔥"
-    return "🟠"
+    if normalized == "calculated":
+        return "✅"
+    return "🟡"
+
+
+def _status_label(status: Optional[str]) -> str:
+    """Человекочитаемое описание статуса лида."""
+    if not status:
+        return "Статус не определён"
+    normalized = status.lower()
+    return FUNNEL_STATUS_LABELS.get(normalized, status)
 
 
 # ----------------------------
@@ -208,21 +214,29 @@ async def _show_lead_card(
     await state.set_state(AdminStates.viewing_leads)
 
     # Подготовка полей
-    pr_icon = _priority_icon(lead.priority_score or 0)
-    gender_text = "👨 Мужской" if lead.gender == "male" else "👩 Женский"
+    status_icon = _status_icon(getattr(lead, "funnel_status", None))
+    status_label = _status_label(getattr(lead, "funnel_status", None))
+
+    if lead.gender == "male":
+        gender_text = "👨 Мужской"
+    elif lead.gender == "female":
+        gender_text = "👩 Женский"
+    else:
+        gender_text = "не указано"
+
     goal_text = get_goal_description(lead.goal or "maintenance")
     activity_text = get_activity_description(lead.activity or "moderate")
 
     card_text = get_text(
         "admin.lead_card",
         # Шапка
-        priority_icon=pr_icon,
         index=index + 1,
         first_name=lead.first_name or "—",
         tg_id=lead.tg_id,
         username_link=_username_link(lead.username),
-        priority_score=lead.priority_score or 0,
         funnel_status=lead.funnel_status or "—",
+        status_icon=status_icon,
+        status_label=status_label,
         # КБЖУ блок
         gender_text=gender_text,
         age_text=_fmt(lead.age, " лет"),
@@ -231,8 +245,6 @@ async def _show_lead_card(
         activity_text=activity_text,
         goal_text=goal_text,
         calories_text=_fmt(lead.calories, " ккал"),
-        # Низ карточки
-        priority_label=_priority_label(getattr(lead, "priority", None)),
         updated_at=(lead.updated_at.strftime("%d.%m %H:%M") if getattr(lead, "updated_at", None) else "—"),
     )
 

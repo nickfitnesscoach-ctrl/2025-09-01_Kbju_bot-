@@ -11,6 +11,7 @@ from typing import Any, Dict, Union
 
 import aiohttp
 
+from app.constants import FUNNEL_STATUSES
 from app.database.models import User
 from app.texts import get_text
 from config import (
@@ -37,8 +38,6 @@ _USER_FIELDS_DEFAULTS: Dict[str, Any] = {
     "fats": 0,
     "carbs": 0,
     "funnel_status": "",
-    "priority": "",
-    "priority_score": 0,
     "created_at": None,
     "updated_at": None,
     "calculated_at": None,
@@ -146,8 +145,6 @@ async def test_webhook_connection() -> bool:
         "fats": 70,
         "carbs": 250,
         "funnel_status": "test",
-        "priority": "nutrition",
-        "priority_score": 50,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow(),
         "calculated_at": datetime.utcnow(),
@@ -167,9 +164,12 @@ class WebhookService:
         return await send_lead(user, event)
 
     @staticmethod
-    async def send_hot_lead(user_data: Mapping[str, Any], priority: str):
+    async def send_hot_lead(
+        user_data: Mapping[str, Any],
+        status: str = FUNNEL_STATUSES["hotlead_consultation"],
+    ) -> bool:
         payload: Dict[str, Any] = dict(user_data)
-        payload["funnel_status"] = f"hotlead_{priority}"
+        payload["funnel_status"] = status
         return await send_lead(payload, "hot_lead")
 
     @staticmethod
