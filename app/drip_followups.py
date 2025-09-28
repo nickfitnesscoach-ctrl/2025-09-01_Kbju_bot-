@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import func, not_, or_, select
+from sqlalchemy import func, not_, select
 
 from app.database.models import User, async_session
 from app.database.requests import update_drip_stage
@@ -325,7 +325,7 @@ async def _process_candidate(bot: Bot, candidate: DripCandidate) -> None:
         _log_verdict(candidate, f"skip (hotlead) status={status}")
         return
 
-    eligible = status in {"new", "calculated"}
+    eligible = status == "calculated"
     if not eligible:
         _log_verdict(candidate, f"skip (status-not-eligible) status={status or 'unknown'}")
         return
@@ -416,10 +416,7 @@ async def _load_candidates() -> tuple[Sequence[DripCandidate], str]:
     query = (
         select(User)
         .where(
-            or_(
-                status_expr == "new",
-                status_expr == "calculated",
-            ),
+            status_expr == "calculated",
             not_(status_expr.like("hotlead%")),
         )
         .order_by(User.id)
