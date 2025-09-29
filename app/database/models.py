@@ -156,3 +156,9 @@ def _ensure_additional_user_columns(sync_conn) -> None:
         "ALTER TABLE users ADD COLUMN drip_stage INTEGER NOT NULL DEFAULT 0",
         "Adding users.drip_stage column for drip follow-ups",
     )
+    _ensure_column(
+        "updated_at",
+        Column("updated_at", DateTime, nullable=True),
+        "ALTER TABLE users ADD COLUMN updated_at DATETIME",
+        "Adding users.updated_at column for tracking updates",
+    )
