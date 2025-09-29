@@ -3,6 +3,8 @@ Webhook сервис для интеграции с n8n
 Отправляет данные о пользователях в Google Sheets через n8n Webhook
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from collections.abc import Mapping
@@ -46,7 +48,9 @@ _USER_FIELDS_DEFAULTS: Dict[str, Any] = {
 _DATETIME_FIELDS = {"created_at", "updated_at", "calculated_at"}
 
 
-def _normalize_user_payload(source: Union[User, Mapping[str, Any]], event: str) -> Dict[str, Any]:
+def _serialize_user_fields(source: Union[User, Mapping[str, Any]]) -> Dict[str, Any]:
+    """Собрать словарь с пользовательскими полями и дефолтами."""
+
     payload: Dict[str, Any] = {}
     for field, default in _USER_FIELDS_DEFAULTS.items():
         if isinstance(source, Mapping):
@@ -62,6 +66,11 @@ def _normalize_user_payload(source: Union[User, Mapping[str, Any]], event: str) 
 
         payload[field] = value if value is not None else default
 
+    return payload
+
+
+def _normalize_user_payload(source: Union[User, Mapping[str, Any]], event: str) -> Dict[str, Any]:
+    payload = _serialize_user_fields(source)
     payload["event"] = event
     payload["timestamp"] = datetime.utcnow().isoformat()
     return payload
@@ -158,6 +167,12 @@ async def test_webhook_connection() -> bool:
 
 class WebhookService:
     """Сервис для отправки webhook-ов в n8n."""
+
+    @staticmethod
+    def serialize_user(source: Union[User, Mapping[str, Any]]) -> Dict[str, Any]:
+        """Преобразовать запись пользователя к безопасному payload-у."""
+
+        return _serialize_user_fields(source)
 
     @staticmethod
     async def send_lead_to_n8n(user: User, event: str = "kbju_lead") -> bool:
