@@ -61,8 +61,14 @@ def _serialize_user_fields(source: Union[User, Mapping[str, Any]]) -> Dict[str, 
         if field in _DATETIME_FIELDS and value is not None:
             if isinstance(value, datetime):
                 value = value.isoformat()
+            elif isinstance(value, str):
+                # Validate ISO format
+                try:
+                    datetime.fromisoformat(value.replace('Z', '+00:00'))
+                except ValueError:
+                    value = None
             else:
-                value = str(value)
+                value = None
 
         payload[field] = value if value is not None else default
 
@@ -78,7 +84,7 @@ def _normalize_user_payload(source: Union[User, Mapping[str, Any]], event: str) 
 
 def _build_headers() -> Dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    if N8N_WEBHOOK_SECRET:
+    if N8N_WEBHOOK_SECRET and N8N_WEBHOOK_SECRET.strip():
         headers["X-Webhook-Secret"] = N8N_WEBHOOK_SECRET
     return headers
 
@@ -96,6 +102,7 @@ async def _send_with_retry(payload: Dict[str, Any]) -> bool:
                 async with session.post(N8N_WEBHOOK_URL, json=payload, headers=headers) as resp:
                     text = await resp.text()
                     if resp.status == 200:
+                        logger.info("Lead %s sent to n8n successfully", payload.get("tg_id"))
                         if DEBUG:
                             logger.debug(
                                 "Lead %s sent to n8n on attempt %s: %s",
@@ -197,16 +204,23 @@ class WebhookService:
 class TimerService:
     """Сервис для работы с таймерами."""
 
-    active_timers: Dict[int, asyncio.Task] = {}
-    stalled_timers: Dict[int, asyncio.Task] = {}
+    active_timers: Dict[int, tuple[asyncio.Task, asyncio.Event]] = {}
+    stalled_timers: Dict[int, tuple[asyncio.Task, asyncio.Event]] = {}
 
     @classmethod
     async def start_calculated_timer(cls, user_id: int, delay_minutes: int = 60):
         cls.cancel_timer(user_id)
+        cancel_event = asyncio.Event()
 
         async def timer_callback():
             try:
-                await asyncio.sleep(delay_minutes * 60)
+                # Используем короткие проверки для быстрой отмены
+                total_seconds = delay_minutes * 60
+                for _ in range(total_seconds):
+                    if cancel_event.is_set():
+                        logger.debug("Timer for user %s cancelled early", user_id)
+                        return
+                    await asyncio.sleep(1)
                 logger.debug("Timer fired for user %s after %s minutes", user_id, delay_minutes)
             except asyncio.CancelledError:
                 logger.debug("Timer for user %s was cancelled", user_id)
@@ -214,21 +228,27 @@ class TimerService:
                 cls.active_timers.pop(user_id, None)
 
         task = asyncio.create_task(timer_callback())
-        cls.active_timers[user_id] = task
+        cls.active_timers[user_id] = (task, cancel_event)
         logger.debug("Started timer for user %s (%s minutes)", user_id, delay_minutes)
 
     @classmethod
     def cancel_timer(cls, user_id: int):
-        task = cls.active_timers.pop(user_id, None)
-        if task and not task.done():
-            task.cancel()
+        timer_data = cls.active_timers.pop(user_id, None)
+        if timer_data:
+            task, cancel_event = timer_data
+            cancel_event.set()  # Устанавливаем event для быстрой отмены
+            if not task.done():
+                task.cancel()
             logger.debug("Cancelled timer for user %s", user_id)
 
     @classmethod
     def cancel_stalled_timer(cls, user_id: int) -> None:
-        task = cls.stalled_timers.pop(user_id, None)
-        if task and not task.done():
-            task.cancel()
+        timer_data = cls.stalled_timers.pop(user_id, None)
+        if timer_data:
+            task, cancel_event = timer_data
+            cancel_event.set()  # Устанавливаем event для быстрой отмены
+            if not task.done():
+                task.cancel()
             logger.debug("Cancelled stalled reminder for user %s", user_id)
 
     @staticmethod
@@ -270,13 +290,20 @@ class TimerService:
             return
 
         cls.cancel_stalled_timer(user_id)
+        cancel_event = asyncio.Event()
 
         async def timer_callback() -> None:
             from app.database.requests import get_user
 
             bot = None
             try:
-                await asyncio.sleep(delay_minutes * 60)
+                # Используем короткие проверки для быстрой отмены
+                total_seconds = delay_minutes * 60
+                for _ in range(total_seconds):
+                    if cancel_event.is_set():
+                        logger.debug("Stalled timer for user %s cancelled early", user_id)
+                        return
+                    await asyncio.sleep(1)
 
                 user = await get_user(user_id)
                 if not user:
@@ -346,5 +373,5 @@ class TimerService:
         logger.debug("Scheduling stalled reminder: user=%s delay=%s", user_id, delay_minutes)
 
         task = asyncio.create_task(timer_callback())
-        cls.stalled_timers[user_id] = task
+        cls.stalled_timers[user_id] = (task, cancel_event)
 

@@ -131,6 +131,8 @@ class KBJUCalculator:
             # минимум жиров для женщин
             if gender == "female" and fats < 40:
                 fats = 40
+                calories_target = proteins * 4 + fats * 9 + carbs * 4
+                calories_adjusted_reason = "fats_min_female_40g"
 
             # Углеводы: остаток, но жёсткий минимум 120 г
             carbs = round((calories_target - proteins * 4 - fats * 9) / 4)
@@ -191,7 +193,7 @@ class KBJUCalculator:
             return False, get_text("errors.gender_invalid")
         if not (15 <= age <= 80):
             return False, get_text("errors.age_range")
-        if not (30 <= weight <= 250):
+        if not (30 <= weight <= 200):
             return False, get_text("errors.weight_range")
         if not (140 <= height <= 220):
             return False, get_text("errors.height_range")

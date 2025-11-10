@@ -74,6 +74,10 @@ async def is_user_subscribed(bot: Bot, user_id: int) -> bool:
     return False
 
 
+# WARNING: Глобальное состояние в памяти процесса.
+# Если бот работает в нескольких процессах (например, с gunicorn workers),
+# данные будут потеряны между процессами.
+# Рекомендация: использовать Redis или FSM context (aiogram) для продакшн-окружения.
 _pending_on_success: dict[int, Callable[[], Awaitable[None]]] = {}
 
 

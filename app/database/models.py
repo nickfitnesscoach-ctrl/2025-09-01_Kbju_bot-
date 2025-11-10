@@ -3,7 +3,7 @@ import logging
 
 from pathlib import Path
 
-from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, String, inspect, text
+from sqlalchemy import BigInteger, Column, DateTime, Float, Index, Integer, String, inspect, text
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.exc import SQLAlchemyError
@@ -58,7 +58,12 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 class User(Base):
     __tablename__ = 'users'
-    
+    __table_args__ = (
+        Index('idx_funnel_status', 'funnel_status'),
+        Index('idx_last_activity', 'last_activity_at'),
+        Index('idx_calculated_at', 'calculated_at'),
+    )
+
     # Существующие поля
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger, unique=True)
@@ -162,3 +167,13 @@ def _ensure_additional_user_columns(sync_conn) -> None:
         "ALTER TABLE users ADD COLUMN updated_at DATETIME",
         "Adding users.updated_at column for tracking updates",
     )
+
+    # Миграция для обновления NULL значений drip_stage
+    if "drip_stage" in existing:
+        try:
+            sync_conn.execute(
+                text("UPDATE users SET drip_stage = 0 WHERE drip_stage IS NULL")
+            )
+            logger.debug("Updated NULL drip_stage values to 0")
+        except SQLAlchemyError as exc:
+            logger.warning("Failed to update NULL drip_stage values: %s", exc)

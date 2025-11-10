@@ -158,10 +158,33 @@ async def startup(dispatcher: Dispatcher, bot: Bot):
 
         await _configure_bot_commands(bot)
 
+        # Проверка ADMIN_CHAT_ID для безопасности
+        if not ADMIN_CHAT_ID:
+            logger.warning(
+                "ADMIN_CHAT_ID is not configured - admin features will be disabled. "
+                "Please set ADMIN_CHAT_ID in .env for admin access."
+            )
+
         logger.info("Fitness Bot started successfully!")
         logger.info("%s", "=" * 50)
 
         DripFollowupService.start(bot)
+
+        # Восстановление таймеров для пользователей со статусом calculated
+        from app.database.requests import get_calculated_users_for_timer
+        from app.webhook import TimerService
+
+        users = await get_calculated_users_for_timer()
+        for user in users:
+            await TimerService.start_calculated_timer(user.tg_id)
+
+        if users:
+            logger.info("Restored timers for %d users with calculated status", len(users))
+
+        # Запуск периодической очистки rate limit buckets
+        from app.user.shared import cleanup_rate_limit_buckets
+        asyncio.create_task(cleanup_rate_limit_buckets())
+        logger.info("Started rate limit cleanup task")
 
     except Exception as e:
         logger.exception("Startup failed: %s", e)

@@ -38,6 +38,13 @@ def sanitize_text(value: Any, max_length: int = MAX_TEXT_LENGTH) -> str:
     """Escape HTML and limit message length."""
 
     text = "" if value is None else str(value)
+
+    # Очистка невалидных UTF-8 последовательностей
+    try:
+        text = text.encode('utf-8', errors='ignore').decode('utf-8')
+    except Exception:
+        text = ""
+
     text = html.escape(text)
     return text if len(text) <= max_length else f"{text[:max_length]}…"
 
@@ -269,10 +276,26 @@ def _extract_user_id(args: Any, kwargs: Any) -> int | None:
     return None
 
 
+async def cleanup_rate_limit_buckets():
+    """Периодическая очистка старых записей из rate limit buckets."""
+    while True:
+        await asyncio.sleep(3600)  # каждый час
+        now = datetime.utcnow().timestamp()
+        to_remove = [
+            uid for uid, bucket in _user_requests.items()
+            if not bucket or (now - bucket[-1]) > 3600
+        ]
+        for uid in to_remove:
+            _user_requests.pop(uid, None)
+        if to_remove:
+            logger.debug("Cleaned up %d inactive rate limit buckets", len(to_remove))
+
+
 __all__ = [
     "sanitize_text",
     "safe_db_operation",
     "rate_limit",
     "error_handler",
     "track_user_activity",
+    "cleanup_rate_limit_buckets",
 ]

@@ -261,8 +261,8 @@ async def update_last_activity(tg_id: int) -> bool:
 async def update_drip_stage(tg_id: int, *, from_stage: int, to_stage: int) -> bool:
     """Атомарно повысить стадию DRIP-рассылки для пользователя."""
 
-    current_stage = max(0, min(3, int(from_stage)))
-    target_stage = max(0, min(3, int(to_stage)))
+    current_stage = max(0, min(4, int(from_stage)))
+    target_stage = max(0, min(4, int(to_stage)))
 
     if target_stage <= current_stage:
         logger.debug(

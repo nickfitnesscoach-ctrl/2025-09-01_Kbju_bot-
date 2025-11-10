@@ -418,6 +418,7 @@ async def _load_candidates() -> tuple[Sequence[DripCandidate], str]:
         .where(
             status_expr == "calculated",
             not_(status_expr.like("hotlead%")),
+            User.calculated_at.isnot(None),
         )
         .order_by(User.id)
     )
