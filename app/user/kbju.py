@@ -26,6 +26,9 @@ from app.keyboards import (
     delayed_offer_keyboard,
     gender_keyboard,
     goal_keyboard,
+    body_type_keyboard,
+    timezone_keyboard,
+    subscription_check_keyboard,
 )
 from app.states import KBJUStates
 from app.texts import get_button_text, get_text
@@ -52,6 +55,10 @@ def register(router: Router) -> None:
     router.message.register(process_age, KBJUStates.waiting_age)
     router.message.register(process_weight, KBJUStates.waiting_weight)
     router.message.register(process_height, KBJUStates.waiting_height)
+    router.message.register(process_target_weight, KBJUStates.waiting_target_weight)
+    router.callback_query.register(process_current_body_type, F.data.startswith("body_current_"))
+    router.callback_query.register(process_target_body_type, F.data.startswith("body_target_"))
+    router.callback_query.register(process_timezone, F.data.startswith("tz_"))
     router.callback_query.register(process_activity, F.data.startswith("activity_"))
     router.callback_query.register(process_goal, F.data.startswith("goal_"))
     router.callback_query.register(process_delayed_yes, F.data == "delayed_yes")
@@ -296,16 +303,205 @@ async def process_height(message: Message, state: FSMContext) -> None:
         limits = VALIDATION_LIMITS["height"]
         if limits["min"] <= height <= limits["max"]:
             await state.update_data(height=height)
+            # 🆕 Переходим к вопросу о желаемом весе
             await message.answer(
-                get_text("questions.activity", height=height),
-                reply_markup=activity_keyboard(),
-                parse_mode="HTML",
+                get_text("questions.target_weight", height=height),
+                parse_mode="HTML"
             )
+            await state.set_state(KBJUStates.waiting_target_weight)
             await _restart_stalled_reminder(message.from_user.id)
         else:
             await message.answer(get_text("errors.height_range"), parse_mode="HTML")
     except (ValueError, TypeError):
         await message.answer(get_text("errors.height_invalid"), parse_mode="HTML")
+
+
+@rate_limit
+@error_handler
+@track_user_activity("process_target_weight")
+async def process_target_weight(message: Message, state: FSMContext) -> None:
+    """Обработка желаемого веса и показ текущей фигуры"""
+    if not (message.from_user and message.text):
+        return
+
+    text = sanitize_text(message.text.strip(), 10)
+    try:
+        target_weight = float(text.replace(',', '.'))
+        limits = VALIDATION_LIMITS["weight"]
+        if limits["min"] <= target_weight <= limits["max"]:
+            await state.update_data(target_weight=target_weight)
+
+            # Получаем пол пользователя
+            data = await state.get_data()
+            gender = data.get('gender', 'male')
+
+            # Показываем фото текущих фигур
+            await show_body_type_photos(message, state, gender, 'current')
+        else:
+            await message.answer(get_text("errors.target_weight_range"), parse_mode="HTML")
+    except (ValueError, TypeError):
+        await message.answer(get_text("errors.target_weight_invalid"), parse_mode="HTML")
+
+
+async def show_body_type_photos(
+    message: Message,
+    state: FSMContext,
+    gender: str,
+    category: str  # 'current' или 'target'
+) -> None:
+    """Показать фотографии типов фигур"""
+    from app.database.requests import get_body_type_images_by_category
+    from aiogram.types import InputMediaPhoto
+
+    # Загружаем изображения из БД
+    images = await get_body_type_images_by_category(gender, category)
+
+    if not images:
+        # Если фото еще не загружены, пропускаем
+        await message.answer(get_text("errors.body_images_not_uploaded"), parse_mode="HTML")
+
+        # Переходим к следующему вопросу
+        if category == 'current':
+            # Пропускаем target_body_type тоже
+            await message.answer(
+                get_text("questions.timezone"),
+                reply_markup=timezone_keyboard(),
+                parse_mode="HTML"
+            )
+            await state.set_state(KBJUStates.waiting_timezone)
+        else:
+            await message.answer(
+                get_text("questions.timezone"),
+                reply_markup=timezone_keyboard(),
+                parse_mode="HTML"
+            )
+            await state.set_state(KBJUStates.waiting_timezone)
+        return
+
+    # Отправляем медиа-группу (до 4 фото)
+    media_group = [
+        InputMediaPhoto(
+            media=img.file_id,
+            caption=img.caption or f"Тип {img.type_number}"
+        )
+        for img in images[:4]
+    ]
+
+    try:
+        await message.answer_media_group(media_group)
+    except Exception as exc:
+        logger.warning(f"Failed to send media group: {exc}")
+        # Продолжаем без фото
+
+    # Кнопки выбора
+    question_key = "questions.current_body_type" if category == 'current' else "questions.target_body_type"
+    
+    # Получаем текст вопроса
+    data = await state.get_data()
+    format_kwargs = {}
+    if category == 'target':
+        format_kwargs['current_body_type'] = data.get('current_body_type', '?')
+    else:
+        format_kwargs['target_weight'] = data.get('target_weight', '?')
+    
+    question_text = get_text(question_key, **format_kwargs)
+    
+    # Создаем клавиатуру с callback_data в зависимости от категории
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    callback_prefix = f"body_{category}_"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="1", callback_data=f"{callback_prefix}1"),
+            InlineKeyboardButton(text="2", callback_data=f"{callback_prefix}2"),
+            InlineKeyboardButton(text="3", callback_data=f"{callback_prefix}3"),
+            InlineKeyboardButton(text="4", callback_data=f"{callback_prefix}4"),
+        ]
+    ])
+
+    await message.answer(question_text, reply_markup=keyboard, parse_mode="HTML")
+
+    # Устанавливаем состояние
+    if category == 'current':
+        await state.set_state(KBJUStates.waiting_current_body_type)
+    else:
+        await state.set_state(KBJUStates.waiting_target_body_type)
+
+
+@rate_limit
+@error_handler
+@track_user_activity("process_current_body_type")
+async def process_current_body_type(
+    callback: CallbackQuery,
+    state: FSMContext
+) -> None:
+    """Обработка выбора текущей фигуры и показ желаемых"""
+    if not (callback.from_user and callback.message and callback.data):
+        return
+
+    type_number = callback.data.split("_")[-1]  # "1", "2", "3", "4"
+    await state.update_data(current_body_type=type_number)
+    await callback.answer()
+
+    # Получаем пол
+    data = await state.get_data()
+    gender = data.get('gender', 'male')
+
+    # Показываем фото желаемых фигур
+    await show_body_type_photos(callback.message, state, gender, 'target')
+
+
+@rate_limit
+@error_handler
+@track_user_activity("process_target_body_type")
+async def process_target_body_type(
+    callback: CallbackQuery,
+    state: FSMContext
+) -> None:
+    """Обработка выбора желаемой фигуры и вопрос о часовом поясе"""
+    if not (callback.from_user and callback.message and callback.data):
+        return
+
+    type_number = callback.data.split("_")[-1]
+    await state.update_data(target_body_type=type_number)
+    await callback.answer()
+
+    # Показываем часовые пояса
+    if callback.message:
+        await callback.message.answer(
+            get_text("questions.timezone"),
+            reply_markup=timezone_keyboard(),
+            parse_mode="HTML"
+        )
+    await state.set_state(KBJUStates.waiting_timezone)
+
+
+@rate_limit
+@error_handler
+@track_user_activity("process_timezone")
+async def process_timezone(
+    callback: CallbackQuery,
+    state: FSMContext
+) -> None:
+    """Обработка часового пояса и переход к вопросу об активности"""
+    if not (callback.from_user and callback.message and callback.data):
+        return
+
+    timezone = callback.data.split("_")[1]
+    await state.update_data(timezone=timezone)
+    await callback.answer()
+
+    # Получаем название часового пояса
+    from app.texts import get_timezone_description
+    timezone_text = get_timezone_description(timezone)
+
+    # Переходим к вопросу об активности
+    if callback.message:
+        await callback.message.answer(
+            get_text("questions.activity", timezone_text=timezone_text),
+            reply_markup=activity_keyboard(),
+            parse_mode="HTML"
+        )
+    await _restart_stalled_reminder(callback.from_user.id)
 
 
 @rate_limit
@@ -344,6 +540,97 @@ async def process_goal(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+async def generate_and_show_ai_recommendations(
+    message: Message,
+    user_id: int,
+    user_data: dict,
+    kbju: dict
+) -> None:
+    """
+    Генерировать и показать AI-рекомендации
+    
+    Args:
+        message: Сообщение пользователя
+        user_id: Telegram ID пользователя
+        user_data: Данные из state (пол, возраст, вес, и т.д.)
+        kbju: Рассчитанные КБЖУ
+    """
+    from app.services.ai_recommendations import generate_ai_recommendations
+    from app.database.requests import update_user
+    from datetime import datetime
+
+    # Показываем сообщение о генерации
+    await message.answer(get_text("ai.generating"), parse_mode="HTML")
+
+    try:
+        # Собираем полные данные для AI
+        full_data = {**user_data, **kbju}
+        
+        # Генерируем AI-рекомендации
+        ai_text = await generate_ai_recommendations(full_data)
+
+        # Сохраняем AI-рекомендации в БД
+        db_user = await get_user(user_id)
+        if db_user:
+            db_user.ai_recommendations = ai_text
+            db_user.ai_generated_at = datetime.utcnow()
+            await update_user(db_user)
+            logger.info(f"AI recommendations saved for user {user_id}")
+
+        # Показываем рекомендации
+        await message.answer(
+            f"🤖 <b>Персональные рекомендации:</b>\n\n{ai_text}",
+            parse_mode="HTML"
+        )
+        logger.info(f"AI recommendations displayed to user {user_id}")
+
+    except Exception as exc:
+        logger.exception(f"Failed to generate AI recommendations for user {user_id}: {exc}")
+        await message.answer(get_text("errors.ai_generation_error"), parse_mode="HTML")
+
+
+async def show_trainer_offer(message: Message) -> None:
+    """
+    Показать оффер тренера с кнопкой "Написать тренеру"
+    
+    Args:
+        message: Сообщение пользователя
+    """
+    from app.database.requests import get_setting
+    from app.constants import DEFAULT_OFFER_TEXT, SETTING_OFFER_TEXT
+    from config import ADMIN_CHAT_ID
+    from aiogram import Bot
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    # Получаем текст оффера из настроек (редактируемый в админке)
+    offer_text = await get_setting(SETTING_OFFER_TEXT)
+    if not offer_text:
+        offer_text = DEFAULT_OFFER_TEXT
+
+    # Получаем username админа/тренера для кнопки
+    trainer_username = None
+    if ADMIN_CHAT_ID and message.bot:
+        try:
+            admin = await message.bot.get_chat(ADMIN_CHAT_ID)
+            if hasattr(admin, 'username') and admin.username:
+                trainer_username = admin.username
+        except Exception as exc:
+            logger.warning(f"Failed to get admin username: {exc}")
+
+    # Создаем кнопку
+    keyboard = None
+    if trainer_username:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="✉️ Написать тренеру",
+                url=f"https://t.me/{trainer_username}"
+            )]
+        ])
+
+    await message.answer(offer_text, reply_markup=keyboard, parse_mode="HTML")
+    logger.info(f"Trainer offer shown to user {message.from_user.id if message.from_user else 'unknown'}")
+
+
 async def _process_goal_after_subscription(callback: CallbackQuery, state: FSMContext) -> None:
     if not callback.data:
         return
@@ -360,6 +647,14 @@ async def _process_goal_after_subscription(callback: CallbackQuery, state: FSMCo
 
         await show_kbju_results(callback, kbju, goal)
 
+        # 🆕 Генерируем AI-рекомендации
+        await generate_and_show_ai_recommendations(
+            callback.message,
+            callback.from_user.id,
+            data,
+            kbju
+        )
+
         user_data = await get_user(callback.from_user.id)
         if user_data:
             logger.info(
@@ -375,8 +670,9 @@ async def _process_goal_after_subscription(callback: CallbackQuery, state: FSMCo
                 "[Webhook] Failed to load user %s for calculated webhook", callback.from_user.id
             )
 
+        # 🆕 Показываем оффер тренера
         if callback.message:
-            await send_diagnostics_offer_message(callback.message)
+            await show_trainer_offer(callback.message)
 
         await state.clear()
     except Exception as exc:  # noqa: BLE001

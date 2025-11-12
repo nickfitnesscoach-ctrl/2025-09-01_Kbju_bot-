@@ -10,7 +10,7 @@ from sqlalchemy import desc, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 
-from app.database.models import User, async_session
+from app.database.models import User, BodyTypeImage, BotSettings, async_session
 from app.texts import get_text
 from utils.notifications import notify_new_hot_lead
 from config import ENABLE_HOT_LEAD_ALERTS
@@ -417,3 +417,148 @@ def _log_missing_hot_lead_column(exc: Exception) -> None:
         "Hot lead notification column unavailable; skipping hot lead tracking: %s",
         exc,
     )
+
+
+async def update_user(user: User) -> None:
+    """Обновить пользователя в БД."""
+    async with async_session() as session:
+        session.add(user)
+        await session.commit()
+
+
+# ============= BodyTypeImage =============
+
+async def get_body_type_image(
+    gender: str,
+    category: str,
+    type_number: str
+) -> BodyTypeImage | None:
+    """Получить изображение типа фигуры"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(BodyTypeImage).where(
+                BodyTypeImage.gender == gender,
+                BodyTypeImage.category == category,
+                BodyTypeImage.type_number == type_number
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def get_body_type_images_by_category(
+    gender: str,
+    category: str
+) -> list[BodyTypeImage]:
+    """Получить все изображения для категории (current/target)"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(BodyTypeImage)
+            .where(
+                BodyTypeImage.gender == gender,
+                BodyTypeImage.category == category
+            )
+            .order_by(BodyTypeImage.type_number)
+        )
+        return list(result.scalars().all())
+
+
+async def save_body_type_image(
+    gender: str,
+    category: str,
+    type_number: str,
+    file_id: str,
+    caption: str | None = None
+) -> BodyTypeImage:
+    """Сохранить или обновить изображение типа фигуры"""
+    async with async_session() as session:
+        # Проверяем, существует ли
+        existing = await session.execute(
+            select(BodyTypeImage).where(
+                BodyTypeImage.gender == gender,
+                BodyTypeImage.category == category,
+                BodyTypeImage.type_number == type_number
+            )
+        )
+        img = existing.scalar_one_or_none()
+
+        if img:
+            # Обновляем
+            img.file_id = file_id
+            img.caption = caption
+            img.uploaded_at = datetime.utcnow()
+        else:
+            # Создаем новый
+            img = BodyTypeImage(
+                gender=gender,
+                category=category,
+                type_number=type_number,
+                file_id=file_id,
+                caption=caption
+            )
+            session.add(img)
+
+        await session.commit()
+        await session.refresh(img)
+        return img
+
+
+async def get_all_body_type_images() -> list[BodyTypeImage]:
+    """Получить все изображения (для админки)"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(BodyTypeImage).order_by(
+                BodyTypeImage.gender,
+                BodyTypeImage.category,
+                BodyTypeImage.type_number
+            )
+        )
+        return list(result.scalars().all())
+
+
+async def delete_body_type_image(image_id: int) -> bool:
+    """Удалить изображение"""
+    async with async_session() as session:
+        img = await session.get(BodyTypeImage, image_id)
+        if img:
+            await session.delete(img)
+            await session.commit()
+            return True
+        return False
+
+
+# ============= BotSettings =============
+
+async def get_setting(key: str) -> str | None:
+    """Получить настройку бота"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(BotSettings).where(BotSettings.key == key)
+        )
+        setting = result.scalar_one_or_none()
+        return setting.value if setting else None
+
+
+async def set_setting(key: str, value: str) -> None:
+    """Установить настройку бота"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(BotSettings).where(BotSettings.key == key)
+        )
+        setting = result.scalar_one_or_none()
+
+        if setting:
+            setting.value = value
+            setting.updated_at = datetime.utcnow()
+        else:
+            setting = BotSettings(key=key, value=value)
+            session.add(setting)
+
+        await session.commit()
+
+
+async def get_all_settings() -> dict[str, str]:
+    """Получить все настройки"""
+    async with async_session() as session:
+        result = await session.execute(select(BotSettings))
+        settings = result.scalars().all()
+        return {s.key: s.value for s in settings}

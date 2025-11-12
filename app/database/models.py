@@ -83,7 +83,17 @@ class User(Base):
     proteins: Mapped[int] = mapped_column(Integer, nullable=True)
     fats: Mapped[int] = mapped_column(Integer, nullable=True)
     carbs: Mapped[int] = mapped_column(Integer, nullable=True)
-    
+
+    # Новые поля для расширенного опроса
+    target_weight: Mapped[float] = mapped_column(Float, nullable=True)
+    current_body_type: Mapped[str] = mapped_column(String(10), nullable=True)  # "1", "2", "3", "4"
+    target_body_type: Mapped[str] = mapped_column(String(10), nullable=True)   # "1", "2", "3", "4"
+    timezone: Mapped[str] = mapped_column(String(50), nullable=True)           # "msk", "spb", etc.
+
+    # AI-рекомендации
+    ai_recommendations: Mapped[str] = mapped_column(String(4000), nullable=True)
+    ai_generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
     # Статусы воронки лидов
     funnel_status: Mapped[str] = mapped_column(String(20), default='new')  # new/calculated/hotlead
     hot_lead_notified_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -100,10 +110,66 @@ class User(Base):
     calculated_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)  # для таймера
 
 
+class BodyTypeImage(Base):
+    """Telegram file_id для изображений типов фигур"""
+    __tablename__ = 'body_type_images'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gender: Mapped[str] = mapped_column(String(10))        # "male" / "female"
+    category: Mapped[str] = mapped_column(String(20))      # "current" / "target"
+    type_number: Mapped[str] = mapped_column(String(5))    # "1", "2", "3", "4"
+    file_id: Mapped[str] = mapped_column(String(200))      # Telegram file_id
+    caption: Mapped[str] = mapped_column(String(200), nullable=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_body_image_unique', 'gender', 'category', 'type_number', unique=True),
+    )
+
+
+class BotSettings(Base):
+    """Редактируемые настройки бота"""
+    __tablename__ = 'bot_settings'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True)
+    value: Mapped[str] = mapped_column(String(2000))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
+
+
+def _ensure_extended_survey_columns(sync_conn) -> None:
+    """Добавить колонки для расширенного опроса"""
+    inspector = inspect(sync_conn)
+    existing = {column["name"] for column in inspector.get_columns(User.__tablename__)}
+
+    new_columns = [
+        ("target_weight", "ALTER TABLE users ADD COLUMN target_weight FLOAT"),
+        ("current_body_type", "ALTER TABLE users ADD COLUMN current_body_type VARCHAR(10)"),
+        ("target_body_type", "ALTER TABLE users ADD COLUMN target_body_type VARCHAR(10)"),
+        ("timezone", "ALTER TABLE users ADD COLUMN timezone VARCHAR(50)"),
+        ("ai_recommendations", "ALTER TABLE users ADD COLUMN ai_recommendations TEXT"),
+        ("ai_generated_at", "ALTER TABLE users ADD COLUMN ai_generated_at DATETIME"),
+    ]
+
+    for col_name, sql in new_columns:
+        if col_name not in existing:
+            try:
+                sync_conn.execute(text(sql))
+                logger.info(f"Added column users.{col_name}")
+            except SQLAlchemyError as exc:
+                logger.exception(f"Failed to add column {col_name}: {exc}")
+                raise
+
+
 async def async_main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_additional_user_columns)
+        await conn.run_sync(_ensure_extended_survey_columns)
 
 
 def _ensure_additional_user_columns(sync_conn) -> None:

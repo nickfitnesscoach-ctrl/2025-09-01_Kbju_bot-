@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}Настройки бота{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>⚙️ Настройки бота</h2>
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">← Назад к меню</a>
+    </div>
+
+    <form method="POST" action="{{ url_for('save_settings') }}">
+        <!-- Текст оффера тренера -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">💼 Текст оффера тренера</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <strong>ℹ️ Инструкция:</strong> Этот текст показывается пользователю после AI-рекомендаций. 
+                    Поддерживается HTML: <code>&lt;b&gt;жирный&lt;/b&gt;</code>, <code>&lt;i&gt;курсив&lt;/i&gt;</code>
+                </div>
+
+                <div class="mb-3">
+                    <label for="offer_text" class="form-label"><strong>Текст оффера:</strong></label>
+                    <textarea 
+                        class="form-control" 
+                        id="offer_text" 
+                        name="offer_text" 
+                        rows="8" 
+                        required 
+                        placeholder="Введите текст оффера тренера..."
+                    >{{ offer_text }}</textarea>
+                    <small class="text-muted">Длина: <span id="offer-length">0</span> символов</small>
+                </div>
+
+                <!-- Превью оффера -->
+                <div class="mb-3">
+                    <label class="form-label"><strong>👁️ Превью:</strong></label>
+                    <div class="border rounded p-3 bg-light" id="offer-preview" style="white-space: pre-wrap;">
+                        {{ offer_text }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Настройки Drip-кампании -->
+        <div class="card mb-4">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">📧 Drip-рассылка</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <strong>ℹ️ Что это:</strong> Автоматические напоминания пользователям, которые не завершили опрос или не ответили на оффер.
+                </div>
+
+                <div class="form-check form-switch">
+                    <input 
+                        class="form-check-input" 
+                        type="checkbox" 
+                        id="drip_enabled" 
+                        name="drip_enabled"
+                        {% if drip_enabled %}checked{% endif %}
+                    >
+                    <label class="form-check-label" for="drip_enabled">
+                        <strong>Включить Drip-рассылку</strong>
+                    </label>
+                </div>
+                <small class="text-muted d-block mt-2">
+                    Когда включено: бот будет отправлять follow-up сообщения неактивным пользователям.
+                </small>
+            </div>
+        </div>
+
+        <!-- Кнопки действий -->
+        <div class="d-flex gap-2 mb-4">
+            <button type="submit" class="btn btn-primary btn-lg">💾 Сохранить настройки</button>
+            <a href="{{ url_for('settings') }}" class="btn btn-secondary btn-lg">🔄 Сбросить</a>
+        </div>
+    </form>
+</div>
+
+<script>
+// Обновление превью и счетчика символов
+const offerTextarea = document.getElementById('offer_text');
+const offerPreview = document.getElementById('offer-preview');
+const offerLength = document.getElementById('offer-length');
+
+function updateOfferPreview() {
+    const text = offerTextarea.value;
+    offerPreview.innerHTML = text;
+    offerLength.textContent = text.length;
+}
+
+offerTextarea.addEventListener('input', updateOfferPreview);
+
+// Инициализация при загрузке
+updateOfferPreview();
+
+// Подтверждение перед сохранением
+document.querySelector('form').addEventListener('submit', function(e) {
+    const drip = document.getElementById('drip_enabled').checked;
+    const message = drip 
+        ? '✅ Drip включена. Пользователи будут получать напоминания.'
+        : '⚠️ Drip выключена. Напоминания отправляться не будут.';
+    
+    if (!confirm(`Сохранить настройки?\n\n${message}`)) {
+        e.preventDefault();
+    }
+});
+</script>
+
+<style>
+#offer-preview {
+    min-height: 150px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.5;
+}
+
+textarea#offer_text {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+}
+</style>
+{% endblock %}

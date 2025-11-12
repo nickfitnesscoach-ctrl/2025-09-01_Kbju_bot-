@@ -33,19 +33,29 @@ _USER_FIELDS_DEFAULTS: Dict[str, Any] = {
     "age": 0,
     "weight": 0.0,
     "height": 0,
+    # 🆕 Новые поля расширенного опроса
+    "target_weight": 0.0,
+    "current_body_type": "",
+    "target_body_type": "",
+    "timezone": "",
+    # Остальные поля
     "activity": "",
     "goal": "",
     "calories": 0,
     "proteins": 0,
     "fats": 0,
     "carbs": 0,
+    # AI-рекомендации
+    "ai_recommendations": "",
+    "ai_generated_at": None,
+    # Статусы
     "funnel_status": "",
     "created_at": None,
     "updated_at": None,
     "calculated_at": None,
 }
 
-_DATETIME_FIELDS = {"created_at", "updated_at", "calculated_at"}
+_DATETIME_FIELDS = {"created_at", "updated_at", "calculated_at", "ai_generated_at"}
 
 
 def _serialize_user_fields(source: Union[User, Mapping[str, Any]]) -> Dict[str, Any]:
@@ -83,9 +93,18 @@ def _normalize_user_payload(source: Union[User, Mapping[str, Any]], event: str) 
 
 
 def _build_headers() -> Dict[str, str]:
+    """Build HTTP headers for webhook requests with authentication.
+
+    Security: N8N_WEBHOOK_SECRET is mandatory when N8N_WEBHOOK_URL is configured.
+    This is enforced at application startup in config.py.
+    """
     headers = {"Content-Type": "application/json"}
     if N8N_WEBHOOK_SECRET and N8N_WEBHOOK_SECRET.strip():
         headers["X-Webhook-Secret"] = N8N_WEBHOOK_SECRET
+        logger.debug("Webhook request includes authentication header")
+    else:
+        # This should never happen due to validation in config.py
+        logger.error("Webhook secret is missing - this should have been caught at startup")
     return headers
 
 

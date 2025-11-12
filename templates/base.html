@@ -82,9 +82,12 @@
             </a>
             <div class="navbar-nav">
                 {% if session.authenticated %}
-                    <a class="nav-link text-white" href="{{ url_for('logout') }}">
-                        🚪 Выйти
-                    </a>
+                    <div class="d-flex gap-2">
+                        <a class="btn btn-sm btn-outline-light" href="{{ url_for('index') }}">📝 Тексты</a>
+                        <a class="btn btn-sm btn-outline-light" href="{{ url_for('body_images') }}">📷 Фигуры</a>
+                        <a class="btn btn-sm btn-outline-light" href="{{ url_for('settings') }}">⚙️ Настройки</a>
+                        <a class="btn btn-sm btn-outline-light" href="{{ url_for('logout') }}">🚪 Выйти</a>
+                    </div>
                 {% endif %}
             </div>
             <span class="navbar-text text-white">

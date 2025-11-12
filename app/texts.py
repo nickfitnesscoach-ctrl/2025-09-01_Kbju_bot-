@@ -24,6 +24,7 @@ __all__ = [
     "get_media_id",
     "get_optional_text",
     "set_media_id",
+    "get_timezone_description",
     "TEXTS",
 ]
 
@@ -163,6 +164,15 @@ def get_button_text(key: str) -> str:
     """
     load_texts()
     return TEXTS.get("buttons", {}).get(key, f"[Кнопка не найдена: {key}]")
+
+
+def get_timezone_description(timezone_code: str) -> str:
+    """
+    Возвращает описание часового пояса по коду.
+    Пример: get_timezone_description('msk') -> 'Москва (МСК)'
+    """
+    load_texts()
+    return TEXTS.get("timezone_descriptions", {}).get(timezone_code, timezone_code)
 
 
 # Первичная загрузка при импорте модуля

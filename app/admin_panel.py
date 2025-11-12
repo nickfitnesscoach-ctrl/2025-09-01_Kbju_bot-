@@ -11,6 +11,9 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+import pyotp
+import qrcode
+import qrcode.image.svg
 import requests
 from dotenv import load_dotenv
 from flask import (
@@ -24,6 +27,8 @@ from flask import (
     session,
     url_for,
 )
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from requests import RequestException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -72,15 +77,59 @@ def _load_password_hash() -> str:
     )
 
 
+def _load_2fa_config() -> tuple[bool, str | None]:
+    """Load 2FA configuration from environment.
+
+    Returns:
+        (enabled, totp_secret): Tuple with 2FA status and TOTP secret if enabled
+    """
+    enable_2fa = os.getenv("ENABLE_2FA", "False").lower() in ("true", "1", "yes")
+
+    if not enable_2fa:
+        return False, None
+
+    totp_secret = os.getenv("TOTP_SECRET")
+    if not totp_secret or not totp_secret.strip():
+        logger.warning(
+            "ENABLE_2FA is True but TOTP_SECRET is not configured. "
+            "2FA will be disabled. Generate a secret with: python -c 'import pyotp; print(pyotp.random_base32())'"
+        )
+        return False, None
+
+    logger.info("Two-Factor Authentication (2FA) is ENABLED for admin panel")
+    return True, totp_secret
+
+
 app = Flask(__name__, template_folder=str(TEMPLATES_DIR))
 app.secret_key = _load_secret_key()
+
+# Security: Check if running in production mode (HTTPS expected)
+USE_HTTPS = os.getenv("USE_HTTPS", "False").lower() in ("true", "1", "yes")
+
+# Security: Limit file upload size to prevent DoS
+# Telegram limits: 20MB for photos, 50MB for videos
+# Setting 20MB as conservative limit (can be increased if needed)
+MAX_FILE_SIZE_MB = 20
+app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE_MB * 1024 * 1024  # 20MB in bytes
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SAMESITE="Strict" if USE_HTTPS else "Lax",
+    SESSION_COOKIE_SECURE=USE_HTTPS,  # Only send cookie over HTTPS
+    PERMANENT_SESSION_LIFETIME=3600,  # 1 hour session timeout
 )
 csrf = CSRFProtect(app)
 
+# Configure rate limiting with Redis or in-memory storage
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",  # Use in-memory storage (upgrade to Redis for production)
+)
+
 PASSWORD_HASH = _load_password_hash()
+ENABLE_2FA, TOTP_SECRET = _load_2fa_config()
 
 
 def load_texts() -> dict[str, Any]:
@@ -150,18 +199,49 @@ def _verify_password(password: str) -> bool:
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])  # Strict rate limit on login attempts
 def login():
     if request.method == "POST":
         password = request.form.get("password", "")
-        if _verify_password(password):
-            session["authenticated"] = True
-            session.permanent = False
-            return redirect(url_for("index"))
 
-        logger.info("Failed admin login attempt")
-        flash("Неверный пароль", "error")
+        # Step 1: Verify password
+        if not _verify_password(password):
+            logger.warning("Failed admin login attempt (wrong password) from %s", get_remote_address())
+            flash("Неверный пароль", "error")
+            return render_template("login.html", enable_2fa=ENABLE_2FA)
 
-    return render_template("login.html")
+        # Step 2: If 2FA is enabled, verify TOTP code
+        if ENABLE_2FA and TOTP_SECRET:
+            totp_code = request.form.get("totp_code", "").strip()
+
+            if not totp_code:
+                # Password correct but TOTP code missing
+                session["password_verified"] = True
+                session.permanent = False
+                flash("Введите код двухфакторной аутентификации", "info")
+                return render_template("login.html", enable_2fa=True, password_verified=True)
+
+            # Verify TOTP code
+            totp = pyotp.TOTP(TOTP_SECRET)
+            if not totp.verify(totp_code, valid_window=1):  # Allow 1 time step tolerance
+                logger.warning(
+                    "Failed admin login attempt (wrong 2FA code) from %s",
+                    get_remote_address()
+                )
+                session.pop("password_verified", None)
+                flash("Неверный код двухфакторной аутентификации", "error")
+                return render_template("login.html", enable_2fa=True)
+
+        # Authentication successful
+        session["authenticated"] = True
+        session["password_verified"] = False  # Clear temporary flag
+        session.permanent = False
+        logger.info("Successful admin login from %s (2FA: %s)", get_remote_address(), ENABLE_2FA)
+        return redirect(url_for("index"))
+
+    # GET request - show login form
+    password_verified = session.get("password_verified", False)
+    return render_template("login.html", enable_2fa=ENABLE_2FA, password_verified=password_verified)
 
 
 @app.route("/logout")
@@ -322,6 +402,24 @@ def upload_media():
     if file is None or not file.filename:
         return jsonify({"ok": False, "error": "Выберите файл для загрузки."}), 400
 
+    # Security: Validate MIME type
+    allowed_photo_mimes = {"image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"}
+    allowed_video_mimes = {"video/mp4", "video/mpeg", "video/quicktime", "video/x-msvideo"}
+
+    if media_type == "photo" and file.mimetype not in allowed_photo_mimes:
+        logger.warning("Rejected photo upload with invalid MIME type: %s", file.mimetype)
+        return jsonify({
+            "ok": False,
+            "error": f"Недопустимый формат фото. Разрешены: JPG, PNG, GIF, WebP"
+        }), 400
+
+    if media_type == "video" and file.mimetype not in allowed_video_mimes:
+        logger.warning("Rejected video upload with invalid MIME type: %s", file.mimetype)
+        return jsonify({
+            "ok": False,
+            "error": f"Недопустимый формат видео. Разрешены: MP4, MPEG, MOV, AVI"
+        }), 400
+
     telegram_method = "sendPhoto" if media_type == "photo" else "sendVideo"
     telegram_field = "photo" if media_type == "photo" else "video"
     endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{telegram_method}"
@@ -410,9 +508,246 @@ def upload_media():
     )
 
 
+# ==================== МОДУЛЬ 9: Управление изображениями фигур ====================
+
+
+@app.route("/body_images")
+@login_required
+def body_images():
+    """Страница управления изображениями типов фигур."""
+    import asyncio
+    from app.database.requests import get_all_body_type_images
+
+    try:
+        images = asyncio.run(get_all_body_type_images())
+    except Exception as exc:
+        logger.exception("Failed to load body type images: %s", exc)
+        flash("Ошибка загрузки изображений", "error")
+        images = []
+
+    # Группируем по gender и category
+    grouped_images = {
+        "male": {"current": [], "target": []},
+        "female": {"current": [], "target": []},
+    }
+
+    for img in images:
+        if img.gender in grouped_images and img.category in grouped_images[img.gender]:
+            grouped_images[img.gender][img.category].append(img)
+
+    # Сортируем по type_number
+    for gender in grouped_images:
+        for category in grouped_images[gender]:
+            grouped_images[gender][category].sort(key=lambda x: int(x.type_number))
+
+    return render_template("body_images.html", grouped_images=grouped_images)
+
+
+@app.route("/upload_body_image", methods=["POST"])
+@login_required
+@limiter.limit("20 per minute")
+def upload_body_image():
+    """Загрузить изображение типа фигуры через Telegram."""
+    import asyncio
+    from app.database.requests import save_body_type_image
+
+    try:
+        gender = request.form.get("gender", "").strip()
+        category = request.form.get("category", "").strip()
+        type_number = request.form.get("type_number", "").strip()
+
+        if not all([gender, category, type_number]):
+            return jsonify({"ok": False, "error": "Все поля обязательны"}), 400
+
+        if gender not in ["male", "female"]:
+            return jsonify({"ok": False, "error": "Неверный пол (male/female)"}), 400
+
+        if category not in ["current", "target"]:
+            return jsonify({"ok": False, "error": "Неверная категория (current/target)"}), 400
+
+        if not type_number.isdigit() or not (1 <= int(type_number) <= 4):
+            return jsonify({"ok": False, "error": "Номер типа должен быть от 1 до 4"}), 400
+
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"ok": False, "error": "Файл не загружен"}), 400
+
+        # Отправляем фото в Telegram для получения file_id
+        files = {"photo": (file.filename, file.stream, file.content_type)}
+        data = {"chat_id": ADMIN_CHAT_ID}
+
+        telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        response = requests.post(telegram_url, data=data, files=files, timeout=30)
+
+        if not response.ok:
+            logger.error("Telegram upload failed: %s", response.text)
+            return jsonify({"ok": False, "error": "Telegram API error"}), 500
+
+        result = response.json()
+        if not result.get("ok"):
+            return jsonify({"ok": False, "error": "Telegram не принял файл"}), 500
+
+        file_id = _extract_file_id("photo", result.get("result"))
+        if not file_id:
+            return jsonify({"ok": False, "error": "Не удалось получить file_id"}), 500
+
+        # Сохраняем в БД
+        caption = f"{gender.capitalize()}, {category}, Тип {type_number}"
+        success = asyncio.run(
+            save_body_type_image(
+                gender=gender,
+                category=category,
+                type_number=type_number,
+                file_id=file_id,
+                caption=caption,
+            )
+        )
+
+        if success:
+            logger.info(
+                "Body type image uploaded: %s/%s/%s (file_id=%s)",
+                gender,
+                category,
+                type_number,
+                file_id,
+            )
+            return jsonify({"ok": True, "file_id": file_id})
+        else:
+            return jsonify({"ok": False, "error": "Ошибка сохранения в БД"}), 500
+
+    except Exception as exc:
+        logger.exception("Body image upload error: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/delete_body_image/<int:image_id>", methods=["POST"])
+@login_required
+@limiter.limit("20 per minute")
+def delete_body_image(image_id: int):
+    """Удалить изображение типа фигуры."""
+    import asyncio
+    from app.database.requests import delete_body_type_image
+
+    try:
+        success = asyncio.run(delete_body_type_image(image_id))
+        if success:
+            flash("Изображение удалено", "success")
+            return jsonify({"ok": True})
+        else:
+            flash("Изображение не найдено", "error")
+            return jsonify({"ok": False, "error": "Not found"}), 404
+    except Exception as exc:
+        logger.exception("Failed to delete body image %d: %s", image_id, exc)
+        flash("Ошибка удаления", "error")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+# ==================== МОДУЛЬ 10: Настройки бота ====================
+
+
+@app.route("/settings")
+@login_required
+def settings():
+    """Страница настроек бота."""
+    import asyncio
+    from app.database.requests import get_all_settings
+    from app.constants import SETTING_OFFER_TEXT, SETTING_DRIP_ENABLED, DEFAULT_OFFER_TEXT
+
+    try:
+        all_settings = asyncio.run(get_all_settings())
+    except Exception as exc:
+        logger.exception("Failed to load settings: %s", exc)
+        flash("Ошибка загрузки настроек", "error")
+        all_settings = {}
+
+    offer_text = all_settings.get(SETTING_OFFER_TEXT, DEFAULT_OFFER_TEXT)
+    drip_enabled = all_settings.get(SETTING_DRIP_ENABLED, "true") == "true"
+
+    return render_template(
+        "settings.html",
+        offer_text=offer_text,
+        drip_enabled=drip_enabled,
+    )
+
+
+@app.route("/save_settings", methods=["POST"])
+@login_required
+@limiter.limit("20 per minute")
+def save_settings():
+    """Сохранить настройки бота."""
+    import asyncio
+    from app.database.requests import set_setting
+    from app.constants import SETTING_OFFER_TEXT, SETTING_DRIP_ENABLED
+
+    try:
+        offer_text = request.form.get("offer_text", "").strip()
+        drip_enabled = request.form.get("drip_enabled") == "on"
+
+        if not offer_text:
+            flash("Текст оффера не может быть пустым", "error")
+            return redirect(url_for("settings"))
+
+        # Сохраняем настройки
+        asyncio.run(set_setting(SETTING_OFFER_TEXT, offer_text))
+        asyncio.run(set_setting(SETTING_DRIP_ENABLED, "true" if drip_enabled else "false"))
+
+        logger.info("Settings saved: offer_text length=%d, drip=%s", len(offer_text), drip_enabled)
+        flash("✅ Настройки сохранены!", "success")
+        return redirect(url_for("settings"))
+
+    except Exception as exc:
+        logger.exception("Failed to save settings: %s", exc)
+        flash("Ошибка сохранения настроек", "error")
+        return redirect(url_for("settings"))
+
+
 @app.route("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """Handle file too large error (HTTP 413)."""
+    logger.warning("File upload rejected: size exceeds %d MB limit", MAX_FILE_SIZE_MB)
+    return (
+        jsonify({
+            "ok": False,
+            "error": f"Файл слишком большой. Максимальный размер: {MAX_FILE_SIZE_MB} МБ"
+        }),
+        413
+    )
+
+
+@app.after_request
+def set_security_headers(response):
+    """Add comprehensive security headers to all responses."""
+    # HSTS - Force HTTPS for 1 year (only if HTTPS is enabled)
+    if USE_HTTPS:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    # Content Security Policy - Restrict resource loading
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "  # unsafe-inline needed for inline scripts
+        "style-src 'self' 'unsafe-inline'; "  # unsafe-inline needed for inline styles
+        "img-src 'self' https://api.telegram.org data:; "
+        "frame-ancestors 'none';"
+    )
+
+    # Prevent clickjacking
+    response.headers["X-Frame-Options"] = "DENY"
+
+    # Prevent MIME sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Referrer Policy
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Permissions Policy - Disable unnecessary features
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+    return response
 
 
 if __name__ == "__main__":

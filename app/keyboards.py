@@ -1,5 +1,6 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from app.texts import get_button_text
+from app.constants import TIMEZONES
 
 
 # Главное меню бота
@@ -72,4 +73,52 @@ def delayed_offer_keyboard() -> InlineKeyboardMarkup:
 def back_to_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_button_text("main_menu"), callback_data="main_menu")],
+    ])
+
+
+# Выбор типа фигуры (1-4)
+def body_type_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для выбора типа фигуры из 4 вариантов"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="1", callback_data="body_type_1"),
+            InlineKeyboardButton(text="2", callback_data="body_type_2"),
+            InlineKeyboardButton(text="3", callback_data="body_type_3"),
+            InlineKeyboardButton(text="4", callback_data="body_type_4"),
+        ]
+    ])
+
+
+# Выбор часового пояса
+def timezone_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для выбора часового пояса (2 в ряд)"""
+    buttons = []
+    row = []
+    for code, name in TIMEZONES.items():
+        # Берем только название города без описания
+        city_name = name.split('(')[0].strip()
+        row.append(InlineKeyboardButton(
+            text=city_name,
+            callback_data=f"tz_{code}"
+        ))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:  # Добавляем оставшиеся кнопки
+        buttons.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# Проверка подписки на канал
+def subscription_check_keyboard(channel_url: str) -> InlineKeyboardMarkup:
+    """Клавиатура для проверки подписки на канал"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=get_button_text("subscribe_channel"),
+            url=channel_url
+        )],
+        [InlineKeyboardButton(
+            text=get_button_text("check_subscription"),
+            callback_data="check_subscription"
+        )]
     ])

@@ -42,3 +42,30 @@ FUNNEL_STATUS_LABELS = {
     FUNNEL_STATUSES['calculated']: 'Получил расчёт',
     FUNNEL_STATUSES['hotlead_consultation']: 'Записан на диагностику',
 }
+
+# Часовые пояса России + Европа
+TIMEZONES = {
+    "msk": "🏛 Москва (МСК, UTC+3)",
+    "spb": "🏰 Санкт-Петербург (МСК, UTC+3)",
+    "kazan": "🕌 Казань (МСК, UTC+3)",
+    "ufa": "🏔 Уфа (МСК, UTC+3)",
+    "tyumen": "🌲 Тюмень (GMT+5)",
+    "yekt": "🏭 Екатеринбург (GMT+5)",
+    "nsk": "🌆 Новосибирск (GMT+7)",
+    "kras": "🏞 Красноярск (GMT+7)",
+    "irk": "🏔 Иркутск (GMT+8)",
+    "vlad": "🌊 Владивосток (GMT+10)",
+    "cet": "🇪🇺 Центральная Европа (CET, UTC+1)",
+    "eet": "🇪🇺 Восточная Европа (EET, UTC+2)",
+}
+
+# Настройки бота (ключи для bot_settings)
+SETTING_OFFER_TEXT = "offer_text"
+SETTING_DRIP_ENABLED = "drip_enabled"
+
+# Дефолтный текст оффера
+DEFAULT_OFFER_TEXT = """
+💪 Хочешь получить персональный план питания и тренировок?
+
+📲 Напиши тренеру для консультации!
+"""

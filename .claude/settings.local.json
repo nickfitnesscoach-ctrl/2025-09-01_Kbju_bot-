@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(mkdir:*)",
+      "Bash(python test_rate_limiting.py:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(tree:*)",
+      "Bash(set N8N_WEBHOOK_SECRET=test:*)",
+      "Bash(.env)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -65,6 +65,15 @@ DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///./data/db.sqlite3")
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
 N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "")
 
+# OpenRouter API
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
+OPENROUTER_MODEL = 'openai/gpt-4o-mini'
+OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
+
+# ID канала для обязательной подписки
+REQUIRED_CHANNEL_ID = os.getenv('REQUIRED_CHANNEL_ID', '')
+REQUIRED_CHANNEL_URL = os.getenv('REQUIRED_CHANNEL_URL', '')
+
 # Проверка подписки на канал
 ENABLE_SUBSCRIPTION_GATE = _as_bool(os.getenv("ENABLE_SUBSCRIPTION_GATE"), True)
 CHANNEL_URL = os.getenv("CHANNEL_URL", "")
@@ -152,4 +161,12 @@ def log_drip_configuration(
 if ADMIN_CHAT_ID is None:
     logger.warning(
         "ADMIN_CHAT_ID is not configured; admin shortcuts and notifications will be limited"
+    )
+
+# Security: Validate webhook authentication
+if N8N_WEBHOOK_URL and not N8N_WEBHOOK_SECRET:
+    raise RuntimeError(
+        "Security Error: N8N_WEBHOOK_SECRET must be set when N8N_WEBHOOK_URL is configured. "
+        "Sending lead data without authentication is a security risk. "
+        "Please set N8N_WEBHOOK_SECRET in your .env file."
     )
