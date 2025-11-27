@@ -65,8 +65,6 @@ class Admin(Filter):
     """Простой фильтр доступа по списку ID."""
 
     def __init__(self, admin_ids: Optional[List[int]] = None):
-        # Задай свой ID здесь или передавай извне.
-        self.admins = admin_ids or [ADMIN_CHAT_ID]
         if admin_ids is not None:
             self.admins = admin_ids
         else:

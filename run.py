@@ -118,8 +118,8 @@ async def main():
     # Создание диспетчера с FSM хранилищем
     dp = Dispatcher(storage=MemoryStorage())
     
-    # Подключение роутеров
-    dp.include_routers(user, admin)
+    # Подключение роутеров (admin первым для приоритета команд)
+    dp.include_routers(admin, user)
 
     _log_startup_configuration(ALLOWED_UPDATES)
 
